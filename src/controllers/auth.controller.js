@@ -214,3 +214,75 @@ export const updateProfile = async (req, res) => {
         res.status(500).json({ message: "Server Error" });
     }
 };
+
+export const forgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+        const user = await User.findOne({ email });
+
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        // Generate 6-digit OTP
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        console.log("--------------------------------");
+        console.log("🔑 DEVELOPMENT OTP:", otp);
+        console.log("--------------------------------");
+        const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+        // Store OTP in database
+        user.resetPasswordOtp = otp;
+        user.resetPasswordExpires = otpExpires;
+        await user.save();
+
+        // Send OTP via Email
+        const subject = "Password Reset Request";
+        const message = `Your OTP for password reset is ${otp}. It expires in 10 minutes.`;
+        const html = `<p>You requested a password reset. Your OTP is <strong>${otp}</strong>. It expires in 10 minutes.</p>`;
+
+        try {
+            await sendEmail(user.email, subject, message, html);
+            res.status(200).json({ message: "OTP sent to your email" });
+        } catch (emailError) {
+            user.resetPasswordOtp = undefined;
+            user.resetPasswordExpires = undefined;
+            await user.save();
+            return res.status(500).json({ message: "Email could not be sent" });
+        }
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
+
+export const resetPassword = async (req, res) => {
+    try {
+        const { email, otp, password } = req.body;
+
+        const user = await User.findOne({
+            email,
+            resetPasswordOtp: otp,
+            resetPasswordExpires: { $gt: Date.now() }
+        });
+
+        if (!user) {
+            return res.status(400).json({ message: "Invalid OTP or Email, or OTP expired" });
+        }
+
+        // Hash new password
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+
+        user.password = hashedPassword;
+        user.resetPasswordOtp = undefined;
+        user.resetPasswordExpires = undefined;
+
+        await user.save();
+
+        res.status(200).json({ message: "Password reset successfully" });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server Error" });
+    }
+};

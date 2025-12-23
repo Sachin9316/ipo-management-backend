@@ -6,6 +6,8 @@ import {
     adminPing,
     getMe,
     updateProfile,
+    forgotPassword,
+    resetPassword,
 } from "../controllers/auth.controller.js";
 import { protect, admin } from "../middlewares/auth.middleware.js";
 import upload from "../middlewares/multer.middleware.js";
@@ -18,5 +20,7 @@ router.post("/verify-otp", verifyEmail);
 router.post("/admin/ping", protect, admin, adminPing);
 router.get("/me", protect, getMe);
 router.put("/profile", protect, upload.single("profileImage"), updateProfile);
+router.post("/forgot-password", forgotPassword);
+router.post("/reset-password", resetPassword);
 
 export default router;
