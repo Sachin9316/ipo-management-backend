@@ -10,10 +10,13 @@ import {
 import { ipoCreateSchema, ipoUpdateSchema } from '../schema/mainboard.schema.js';
 import { zodValidate } from '../middlewares/zod.middleware.js';
 
-mainboardRoute.post('/mainboards', zodValidate(ipoCreateSchema), createMainboard);
+import upload from '../middlewares/multer.middleware.js';
+import { parseJsonFields } from '../middlewares/jsonParser.middleware.js';
+
+mainboardRoute.post('/mainboards', upload.single('icon'), parseJsonFields, zodValidate(ipoCreateSchema), createMainboard);
 mainboardRoute.get('/mainboards', getAllMainboards);
 mainboardRoute.get('/mainboard/:id', getMainboardById);
-mainboardRoute.patch("/mainboard/:id", zodValidate(ipoUpdateSchema), updateMainboardById);
+mainboardRoute.patch("/mainboard/:id", upload.single('icon'), parseJsonFields, zodValidate(ipoUpdateSchema), updateMainboardById);
 mainboardRoute.delete('/mainboard/:id', deleteMainboardById);
 
 export default mainboardRoute;

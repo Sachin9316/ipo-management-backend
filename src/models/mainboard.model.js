@@ -29,6 +29,8 @@ const mainboardSchema = new mongoose.Schema({
     registrarLink: { type: String },
     lot_size: { type: Number, required: true },
     lot_price: { type: Number, required: true },
+    min_price: { type: Number },
+    max_price: { type: Number },
     bse_code_nse_code: { type: String, required: true },
     isAllotmentOut: { type: Boolean, required: true },
     rhp_pdf: { type: String },

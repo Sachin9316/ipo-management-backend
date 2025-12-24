@@ -1,13 +1,44 @@
 import Mainboard from "../models/mainboard.model.js";
 import { serverErrorHandler } from "../utils/serverErrorHandling.js";
 
+import cloudinary from "../config/cloudinary.js";
+
+const uploadToCloudinary = (buffer) => {
+    return new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+            { resource_type: "image", folder: "ipos" },
+            (error, result) => {
+                if (error) return reject(error);
+                resolve(result);
+            }
+        );
+        uploadStream.end(buffer);
+    });
+};
+
 export const createMainboard = async (req, res) => {
     try {
-        const mainboardData = req.validated.body;
+        const mainboardData = req.validated ? req.validated.body : req.body;
 
         if (!mainboardData.slug) {
             mainboardData.slug = mainboardData.companyName.toLowerCase().replace(/ /g, "-");
         }
+
+        // Handle Image Upload
+        if (req.file) {
+            try {
+                const result = await uploadToCloudinary(req.file.buffer);
+                mainboardData.icon = result.secure_url;
+                // Optional: Store cloudinaryId if you want to delete it later
+                // mainboardData.cloudinaryId = result.public_id;
+            } catch (uploadError) {
+                console.error("Image upload failed:", uploadError);
+                return res.status(500).json({ success: false, message: "Image upload failed" });
+            }
+        }
+
+        // Force ipoType to MAINBOARD
+        mainboardData.ipoType = 'MAINBOARD';
 
         const newMainboard = new Mainboard(mainboardData);
         await newMainboard.save();
@@ -38,11 +69,12 @@ export const getAllMainboards = async (req, res) => {
         const limit = parseInt(req.query.limit) || 10;
         const skip = (page - 1) * limit;
 
-        const filter = {};
+        const filter = { ipoType: 'MAINBOARD' };
         console.log("Incoming Query:", req.query);
         if (req.query.status) {
             filter.status = req.query.status.toUpperCase();
         }
+        // If explicitly requested, we can still support filtering but default is MAINBOARD
         if (req.query.ipoType) {
             filter.ipoType = req.query.ipoType.toUpperCase();
         }
@@ -92,6 +124,18 @@ export const updateMainboardById = async (req, res) => {
         const updateData = req.validated?.body || req.body;
 
         delete updateData.slug;
+        delete updateData.ipoType;
+
+        // Handle Image Upload
+        if (req.file) {
+            try {
+                const result = await uploadToCloudinary(req.file.buffer);
+                updateData.icon = result.secure_url;
+            } catch (uploadError) {
+                console.error("Image upload failed:", uploadError);
+                return res.status(500).json({ success: false, message: "Image upload failed" });
+            }
+        }
 
         const updatedMainboard = await Mainboard.findByIdAndUpdate(
             id,

@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 dotenv.config();
 import dbConnect from './config/db.js';
+import smeRoute from './routes/sme.routes.js';
 import mainboardRoute from './routes/mainboard.route.js';
 import listedRoute from './routes/listed.route.js';
 import authRoutes from './routes/auth.routes.js';
@@ -20,6 +21,7 @@ app.get('/', (req, res) => {
 });
 
 app.use('/api/v1', mainboardRoute);
+app.use('/api/v1', smeRoute);
 app.use('/api/v1', listedRoute);
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
