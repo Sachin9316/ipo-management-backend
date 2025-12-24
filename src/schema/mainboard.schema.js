@@ -4,7 +4,7 @@ export const ipoCreateSchema = z.object({
     body: z.object({
         companyName: z.string().min(1, "Company name is required"),
         slug: z.string().optional(),
-        icon: z.string().min(1, "Icon is required"),
+        icon: z.string().optional(),
         ipoType: z.enum(["MAINBOARD", "SME"]).optional(),
         status: z.enum(["UPCOMING", "OPEN", "CLOSED", "LISTED"]),
         subscription: z.object({
