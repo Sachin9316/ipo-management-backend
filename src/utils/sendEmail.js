@@ -1,42 +1,31 @@
-
-import { Resend } from 'resend';
+import nodemailer from "nodemailer";
 import dotenv from "dotenv";
 
 dotenv.config();
 
-const resendApiKey = process.env.RESEND_API_KEY;
-
-// Only initialize if key is present to prevent startup crash
-const resend = resendApiKey ? new Resend(resendApiKey) : null;
+const transporter = nodemailer.createTransport({
+    secure: true,
+    port: 465,
+    host: "smtp.gmail.com",
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+    },
+});
 
 export const sendEmail = async (to, subject, text, html) => {
     try {
-        if (!resend) {
-            console.warn("Resend API Key is missing. Email not sent.");
-            if (process.env.NODE_ENV === 'development') {
-                console.log("Mock Email:", { to, subject, text });
-                return { id: 'mock-id' };
-            }
-            throw new Error("Missing RESEND_API_KEY");
-        }
+        const mailOptions = {
+            from: process.env.EMAIL_USER, // Sender address
+            to,
+            subject,
+            text,
+            html,
+        };
 
-        const sender = process.env.EMAIL_FROM || 'IPO Wizard <onboarding@resend.dev>';
-
-        const { data, error } = await resend.emails.send({
-            from: sender,
-            to: [to],
-            subject: subject,
-            html: html || text,
-            text: text
-        });
-
-        if (error) {
-            console.error("Resend Error:", error);
-            throw new Error(error.message);
-        }
-
-        console.log("Email sent successfully:", data);
-        return data;
+        const info = await transporter.sendMail(mailOptions);
+        console.log("Email sent: " + info.response);
+        return info;
     } catch (error) {
         console.error("Error sending email:", error);
         throw error;
