@@ -356,11 +356,50 @@ export const startMagicLogin = async (req, res) => {
 
         // Send Email
         const verifyUrl = `${req.protocol}://${req.get("host")}/api/auth/magic-verify?id=${loginId}&token=${token}`;
-        const message = `Click to login: ${verifyUrl}`;
-        const html = `<a href="${verifyUrl}">Click here to login</a>`;
+        const message = `Click the button below to login to IPO Wizard: ${verifyUrl}`;
+
+        const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f4f4f5; }
+                .container { max-width: 600px; margin: 40px auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+                .header { background: #6200EE; padding: 30px; text-align: center; } /* Using primary color */
+                .header h1 { color: #ffffff; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: 1px; }
+                .content { padding: 40px 30px; text-align: center; }
+                .content h2 { margin-top: 0; color: #1a1a1a; font-size: 22px; }
+                .content p { color: #666; font-size: 16px; margin-bottom: 30px; }
+                .btn { display: inline-block; background: #6200EE; color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px; transition: background 0.2s; }
+                .btn:hover { background: #5000c9; } /* Darker shade for hover */
+                .footer { background: #fafafa; padding: 20px; text-align: center; font-size: 12px; color: #999; border-top: 1px solid #eaeaea; }
+                .link-text { margin-top: 20px; font-size: 12px; color: #999; word-break: break-all; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>IPO WIZARD</h1>
+                </div>
+                <div class="content">
+                    <h2>Verify your Login</h2>
+                    <p>Hello ${user.name || 'User'},</p>
+                    <p>You requested a secure login link for IPO Wizard. Click the button below to sign in instantly.</p>
+                    <a href="${verifyUrl}" class="btn">Verify Login</a>
+                    <p class="link-text">Or copy this link: ${verifyUrl}</p>
+                </div>
+                <div class="footer">
+                    <p>&copy; ${new Date().getFullYear()} IPO Wizard. All rights reserved.</p>
+                    <p>If you didn't request this, you can safely ignore this email.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        `;
 
         try {
-            await sendEmail(user.email, "Login Verification", message, html);
+            await sendEmail(user.email, "Log in to IPO Wizard", message, html);
             res.json({ loginId, message: "Magic link sent" });
         } catch (err) {
             user.magicLinkToken = undefined;
