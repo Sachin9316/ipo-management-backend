@@ -402,15 +402,19 @@ export const startMagicLogin = async (req, res) => {
             await sendEmail(user.email, "Log in to IPO Wizard", message, html);
             res.json({ loginId, message: "Magic link sent" });
         } catch (err) {
+            console.error("Magic Login Email Error:", err);
             user.magicLinkToken = undefined;
             user.magicLoginId = undefined;
             await user.save();
-            return res.status(500).json({ message: "Email could not be sent" });
+            return res.status(500).json({
+                message: "Email failed: " + (err.message || "Unknown Error"),
+                error: err.toString()
+            });
         }
 
     } catch (error) {
         console.error(error);
-        res.status(500).json({ message: "Server Error" });
+        res.status(500).json({ message: "Server Error: " + error.message });
     }
 };
 
