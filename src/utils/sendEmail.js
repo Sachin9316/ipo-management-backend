@@ -1,14 +1,29 @@
+```javascript
 import { Resend } from 'resend';
 import dotenv from "dotenv";
 
 dotenv.config();
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resendApiKey = process.env.RESEND_API_KEY;
+
+// Only initialize if key is present to prevent startup crash
+const resend = resendApiKey ? new Resend(resendApiKey) : null;
 
 export const sendEmail = async (to, subject, text, html) => {
     try {
+        if (!resend) {
+            console.warn("Resend API Key is missing. Email not sent.");
+            if (process.env.NODE_ENV === 'development') {
+                console.log("Mock Email:", { to, subject, text });
+                return { id: 'mock-id' };
+            }
+            throw new Error("Missing RESEND_API_KEY");
+        }
+
+        const sender = process.env.EMAIL_FROM || 'IPO Wizard <onboarding@resend.dev>';
+
         const { data, error } = await resend.emails.send({
-            from: 'IPO Wizard <onboarding@resend.dev>', // Default testing domain
+            from: sender,
             to: [to],
             subject: subject,
             html: html || text,
