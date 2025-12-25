@@ -323,3 +323,118 @@ export const resetPassword = async (req, res) => {
         res.status(500).json({ message: "Server Error" });
     }
 };
+
+export const startMagicLogin = async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) return res.status(400).json({ message: "Email is required" });
+
+        let user = await User.findOne({ email });
+
+        // Create user if not exists (implicit registration)
+        if (!user) {
+            const salt = await bcrypt.genSalt(10);
+            const hashedPassword = await bcrypt.hash(crypto.randomBytes(16).toString('hex'), salt);
+            user = await User.create({
+                name: email.split('@')[0],
+                email,
+                password: hashedPassword,
+                role: 'user',
+                isVerified: false
+            });
+        }
+
+        const loginId = crypto.randomBytes(16).toString("hex");
+        const token = crypto.randomBytes(32).toString("hex");
+        const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+
+        user.magicLoginId = loginId;
+        user.magicLinkToken = tokenHash;
+        user.magicLinkExpires = Date.now() + 10 * 60 * 1000; // 10 mins
+        user.magicLinkStatus = "pending";
+        await user.save();
+
+        // Send Email
+        const verifyUrl = `${req.protocol}://${req.get("host")}/api/auth/magic-verify?id=${loginId}&token=${token}`;
+        const message = `Click to login: ${verifyUrl}`;
+        const html = `<a href="${verifyUrl}">Click here to login</a>`;
+
+        try {
+            await sendEmail(user.email, "Login Verification", message, html);
+            res.json({ loginId, message: "Magic link sent" });
+        } catch (err) {
+            user.magicLinkToken = undefined;
+            user.magicLoginId = undefined;
+            await user.save();
+            return res.status(500).json({ message: "Email could not be sent" });
+        }
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
+
+export const verifyMagicLink = async (req, res) => {
+    try {
+        const { id, token } = req.query;
+        const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+
+        const user = await User.findOne({
+            magicLoginId: id,
+            magicLinkToken: tokenHash,
+            magicLinkExpires: { $gt: Date.now() }
+        });
+
+        if (!user) {
+            return res.send("<h1>Invalid or Expired Link</h1>");
+        }
+
+        user.magicLinkStatus = "verified";
+        user.isVerified = true;
+        user.magicLinkToken = undefined;
+        user.magicLinkExpires = undefined;
+        await user.save();
+
+        res.send("<h1>Login Verified!</h1><p>You can go back to the app now.</p>");
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).send("Server Error");
+    }
+};
+
+export const checkMagicLoginStatus = async (req, res) => {
+    try {
+        const { loginId } = req.body;
+        const user = await User.findOne({ magicLoginId: loginId });
+
+        if (!user) return res.status(404).json({ message: "Invalid Login ID" });
+
+        if (user.magicLinkStatus === "verified") {
+            const token = generateToken(user._id);
+            // Clear login ID so it can't be reused immediately (optional, or rely on expiration)
+            user.magicLoginId = undefined;
+            user.magicLinkStatus = "pending";
+            await user.save();
+
+            return res.json({
+                status: "verified",
+                token,
+                user: {
+                    _id: user._id,
+                    name: user.name,
+                    email: user.email,
+                    role: user.role,
+                    isVerified: user.isVerified
+                }
+            });
+        }
+
+        res.json({ status: "pending" });
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
