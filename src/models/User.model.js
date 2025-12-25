@@ -40,6 +40,11 @@ const userSchema = new mongoose.Schema(
     resetPasswordExpires: {
       type: Date,
     },
+    // Magic Link Auth
+    magicLinkToken: { type: String },
+    magicLinkExpires: { type: Date },
+    magicLoginId: { type: String }, // Public ID for polling
+    magicLinkStatus: { type: String, enum: ["pending", "verified"], default: "pending" },
     profileImage: {
       type: String,
       default: "",
@@ -50,8 +55,12 @@ const userSchema = new mongoose.Schema(
     },
     panDocuments: [
       {
-        panNumber: { type: String, required: true },
-        nameOnPan: { type: String, required: true },
+        panNumber: {
+          type: String,
+          required: true,
+          match: [/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, 'Please enter a valid PAN number']
+        },
+        name: { type: String, required: true },
         dob: { type: Date },
         status: { type: String, enum: ["PENDING", "VERIFIED", "REJECTED"], default: "PENDING" },
         documentUrl: { type: String }, // Link to uploaded image/pdf

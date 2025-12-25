@@ -1,5 +1,28 @@
 import User from "../models/User.model.js";
 
+// @desc    Get user profile (User facing)
+// @route   GET /api/users/profile
+// @access  Private
+export const getUserProfile = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id);
+        if (user) {
+            res.json({
+                _id: user._id,
+                name: user.name,
+                email: user.email,
+                role: user.role,
+                panDocuments: user.panDocuments
+            });
+        } else {
+            res.status(404).json({ message: "User not found" });
+        }
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
+
 // @desc    Get all customers (non-admins)
 // @route   GET /api/users/customers
 // @access  Private/Admin
@@ -76,17 +99,10 @@ export const addMyPan = async (req, res) => {
         const user = await User.findById(req.user._id);
 
         if (user) {
-            const { panNumber, nameOnPan, dob, documentUrl } = req.body;
-
-            // Check duplicates
-            const exists = user.panDocuments.find(p => p.panNumber === panNumber);
-            if (exists) {
-                return res.status(400).json({ message: "PAN already added" });
-            }
 
             user.panDocuments.push({
                 panNumber,
-                nameOnPan,
+                name,
                 dob,
                 documentUrl,
                 status: "PENDING"

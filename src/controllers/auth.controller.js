@@ -38,9 +38,12 @@ export const registerUser = async (req, res) => {
 
         if (user) {
             // Send OTP Email
-            const subject = "Email Verification - Your OTP";
-            const text = `Your OTP for email verification is ${otp}. It expires in 10 minutes.`;
-            const html = `<p>Your OTP for email verification is <strong>${otp}</strong>. It expires in 10 minutes.</p>`;
+            const link = `${req.protocol}://${req.get("host")}/api/auth/verify-email-link?email=${email}&otp=${otp}`;
+            const subject = "Email Verification - Verify Your Account";
+            const text = `Your OTP for email verification is ${otp}. You can also verify by clicking this link: ${link}`;
+            const html = `<p>Your OTP for email verification is <strong>${otp}</strong>.</p>
+                          <p>Or click this link to verify: <a href="${link}">Verify Email</a></p>
+                          <p>Link expires in 10 minutes.</p>`;
 
             try {
                 await sendEmail(user.email, subject, text, html);
@@ -124,6 +127,40 @@ export const verifyEmail = async (req, res) => {
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Server Error" });
+    }
+};
+
+export const verifyEmailLink = async (req, res) => {
+    try {
+        const { email, otp } = req.query;
+
+        if (!email || !otp) {
+            return res.send("<h1>Invalid Request</h1><p>Missing parameters.</p>");
+        }
+
+        const user = await User.findOne({ email });
+
+        if (!user) {
+            return res.send("<h1>User Not Found</h1>");
+        }
+
+        if (user.isVerified) {
+            return res.send("<h1>Already Verified</h1><p>Your email is already verified. You can login now.</p>");
+        }
+
+        if (user.otp === otp && user.otpExpires > Date.now()) {
+            user.isVerified = true;
+            user.otp = undefined;
+            user.otpExpires = undefined;
+            await user.save();
+
+            res.send("<h1>Email Verified Successfully</h1><p>You can now close this window and login to the app.</p>");
+        } else {
+            res.send("<h1>Verification Failed</h1><p>Invalid or expired Link.</p>");
+        }
+    } catch (error) {
+        console.error(error);
+        res.status(500).send("Server Error");
     }
 };
 

@@ -1,10 +1,15 @@
 import express from "express";
-import { getUsers, getCustomers, getUserById, updateUserPan, addMyPan, deleteMyPan } from "../controllers/user.controller.js";
+import {
+    getUsers, getCustomers, getUserById, updateUserPan, addMyPan,
+    deleteMyPan,
+    getUserProfile
+} from "../controllers/user.controller.js";
 import { protect, admin } from "../middlewares/auth.middleware.js";
 
 const router = express.Router();
 
 // User facing routes
+router.route("/profile").get(protect, getUserProfile);
 router.route("/profile/pan")
     .post(protect, addMyPan);
 
