@@ -65,7 +65,8 @@ const userSchema = new mongoose.Schema(
         status: { type: String, enum: ["PENDING", "VERIFIED", "REJECTED"], default: "PENDING" },
         documentUrl: { type: String }, // Link to uploaded image/pdf
       }
-    ]
+    ],
+    watchlist: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Mainboard' }]
   },
   { timestamps: true }
 );

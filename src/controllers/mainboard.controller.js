@@ -6,7 +6,15 @@ import cloudinary from "../config/cloudinary.js";
 const uploadToCloudinary = (buffer) => {
     return new Promise((resolve, reject) => {
         const uploadStream = cloudinary.uploader.upload_stream(
-            { resource_type: "image", folder: "ipos" },
+            {
+                resource_type: "image",
+                folder: "ipos",
+                width: 200,
+                height: 200,
+                crop: "fill",
+                gravity: "center",
+                format: "webp" // Optional: force webp for better performance
+            },
             (error, result) => {
                 if (error) return reject(error);
                 resolve(result);
@@ -69,14 +77,37 @@ export const getAllMainboards = async (req, res) => {
         const limit = parseInt(req.query.limit) || 10;
         const skip = (page - 1) * limit;
 
-        const filter = { ipoType: 'MAINBOARD' };
+        const filter = {}; // Defaults to empty filter to allow searching ALL types if needed
+
+        // If not searching, we might want to default to MAINBOARD to preserve existing behavior for tabs
+        // But for consistency let's stick to explicit requests or default behavior.
+        // Existing behavior: "const filter = { ipoType: 'MAINBOARD' };"
+
+        // Revised Logic:
+        // 1. If explicit ipoType=ALL or searching, don't force MAINBOARD.
+        // 2. Otherwise default to MAINBOARD.
+
+        if (!req.query.search && (!req.query.ipoType || req.query.ipoType.toUpperCase() !== 'ALL')) {
+            filter.ipoType = 'MAINBOARD';
+        }
+
         console.log("Incoming Query:", req.query);
         if (req.query.status) {
             filter.status = req.query.status.toUpperCase();
         }
-        // If explicitly requested, we can still support filtering but default is MAINBOARD
-        if (req.query.ipoType) {
+
+        if (req.query.ipoType && req.query.ipoType.toUpperCase() !== 'ALL') {
             filter.ipoType = req.query.ipoType.toUpperCase();
+        }
+
+        if (req.query.search) {
+            const searchRegex = new RegExp(req.query.search, 'i');
+            filter.$or = [
+                { companyName: searchRegex },
+                { bse_code_nse_code: searchRegex }
+            ];
+            // If searching, we typically want to search ALL types unless restricted
+            // The logic above ensures that if 'search' is present, we DON'T auto-set MAINBOARD.
         }
         console.log("Applied Filter:", filter);
 

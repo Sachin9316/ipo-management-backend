@@ -41,6 +41,12 @@ const mainboardSchema = new mongoose.Schema({
         eps: { type: Number },
         valuation: { type: String }
     },
+    swot: {
+        strengths: { type: [String] },
+        weaknesses: { type: [String] },
+        opportunities: { type: [String] },
+        threats: { type: [String] }
+    },
     listing_info: {
         listing_price: { type: Number },
         listing_gain: { type: Number },

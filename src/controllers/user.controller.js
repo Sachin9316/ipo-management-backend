@@ -12,7 +12,8 @@ export const getUserProfile = async (req, res) => {
                 name: user.name,
                 email: user.email,
                 role: user.role,
-                panDocuments: user.panDocuments
+                panDocuments: user.panDocuments,
+                watchlist: user.watchlist
             });
         } else {
             res.status(404).json({ message: "User not found" });
@@ -91,6 +92,56 @@ export const updateUserPan = async (req, res) => {
     }
 };
 
+// @desc    Update user (Admin)
+// @route   PUT /api/users/:id
+// @access  Private/Admin
+export const updateUser = async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id);
+
+        if (user) {
+            user.name = req.body.name || user.name;
+            user.email = req.body.email || user.email;
+            user.role = req.body.role || user.role;
+            user.phoneNumber = req.body.phoneNumber || user.phoneNumber;
+
+            const updatedUser = await user.save();
+
+            res.json({
+                _id: updatedUser._id,
+                name: updatedUser.name,
+                email: updatedUser.email,
+                role: updatedUser.role,
+                phoneNumber: updatedUser.phoneNumber,
+            });
+        } else {
+            res.status(404).json({ message: "User not found" });
+        }
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
+
+// @desc    Delete user (Admin)
+// @route   DELETE /api/users/:id
+// @access  Private/Admin
+export const deleteUser = async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id);
+
+        if (user) {
+            await user.deleteOne();
+            res.json({ message: "User removed" });
+        } else {
+            res.status(404).json({ message: "User not found" });
+        }
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
+
 // @desc    Add a PAN document (User facing)
 // @route   POST /api/users/profile/pan
 // @access  Private
@@ -141,6 +192,45 @@ export const deleteMyPan = async (req, res) => {
         } else {
             res.status(404).json({ message: "User not found" });
         }
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
+// @desc    Get Populated Watchlist
+// @route   GET /api/users/profile/watchlist
+// @access  Private
+export const getWatchlist = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id).populate('watchlist');
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        res.json(user.watchlist);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
+
+export const toggleWatchlist = async (req, res) => {
+    try {
+        const { ipoId } = req.body;
+        const user = await User.findById(req.user._id);
+
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        const index = user.watchlist.indexOf(ipoId);
+        if (index > -1) {
+            user.watchlist.splice(index, 1); // Remove
+        } else {
+            user.watchlist.push(ipoId); // Add
+        }
+
+        await user.save();
+        res.json(user.watchlist);
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Server Error" });

@@ -6,7 +6,15 @@ import cloudinary from "../config/cloudinary.js";
 const uploadToCloudinary = (buffer) => {
     return new Promise((resolve, reject) => {
         const uploadStream = cloudinary.uploader.upload_stream(
-            { resource_type: "image", folder: "sme-ipos" },
+            {
+                resource_type: "image",
+                folder: "sme-ipos",
+                width: 200,
+                height: 200,
+                crop: "fill",
+                gravity: "center",
+                format: "webp"
+            },
             (error, result) => {
                 if (error) return reject(error);
                 resolve(result);
