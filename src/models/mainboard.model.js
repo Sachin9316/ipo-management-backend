@@ -16,6 +16,8 @@ const mainboardSchema = new mongoose.Schema({
     subscription: {
         qib: { type: Number, default: 0 },
         nii: { type: Number, default: 0 },
+        bnii: { type: Number, default: 0 }, // HNI (>10L)
+        snii: { type: Number, default: 0 }, // SNI (<10L)
         retail: { type: Number, default: 0 },
         employee: { type: Number, default: 0 },
         total: { type: Number, default: 0 },
@@ -57,5 +59,5 @@ const mainboardSchema = new mongoose.Schema({
     timestamps: true,
 });
 
-const Mainboard = mongoose.model("Mainboard", mainboardSchema);
+const Mainboard = mongoose.models.Mainboard || mongoose.model("Mainboard", mainboardSchema);
 export default Mainboard;
