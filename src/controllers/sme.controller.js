@@ -78,6 +78,14 @@ export const getAllSMEIPOs = async (req, res) => {
             filter.status = req.query.status.toUpperCase();
         }
 
+        if (req.query.search) {
+            const searchRegex = new RegExp(req.query.search, 'i');
+            filter.$or = [
+                { companyName: searchRegex },
+                { bse_code_nse_code: searchRegex }
+            ];
+        }
+
         const smeIPOs = await Mainboard.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit);
         const total = await Mainboard.countDocuments(filter);
         const totalPages = Math.ceil(total / limit);

@@ -84,10 +84,10 @@ export const getAllMainboards = async (req, res) => {
         // Existing behavior: "const filter = { ipoType: 'MAINBOARD' };"
 
         // Revised Logic:
-        // 1. If explicit ipoType=ALL or searching, don't force MAINBOARD.
-        // 2. Otherwise default to MAINBOARD.
+        // Always default to MAINBOARD unless ipoType is explicitly ALL.
+        // Even if searching, we should respect the type boundary unless told otherwise.
 
-        if (!req.query.search && (!req.query.ipoType || req.query.ipoType.toUpperCase() !== 'ALL')) {
+        if (!req.query.ipoType || req.query.ipoType.toUpperCase() !== 'ALL') {
             filter.ipoType = 'MAINBOARD';
         }
 
