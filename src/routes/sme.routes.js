@@ -5,7 +5,8 @@ import {
     getAllSMEIPOs,
     getSMEIPOById,
     updateSMEIPOById,
-    deleteSMEIPOById
+    deleteSMEIPOById,
+    deleteSMEBulk
 } from '../controllers/sme.controller.js';
 import { ipoCreateSchema, ipoUpdateSchema } from '../schema/mainboard.schema.js';
 import { zodValidate } from '../middlewares/zod.middleware.js';
@@ -18,5 +19,6 @@ smeRoute.get('/sme-ipos', getAllSMEIPOs);
 smeRoute.get('/sme-ipo/:id', getSMEIPOById);
 smeRoute.patch("/sme-ipo/:id", upload.single('icon'), parseJsonFields, zodValidate(ipoUpdateSchema), updateSMEIPOById);
 smeRoute.delete('/sme-ipo/:id', deleteSMEIPOById);
+smeRoute.post('/sme-ipos/bulk-delete', deleteSMEBulk);
 
 export default smeRoute;

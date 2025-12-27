@@ -181,3 +181,22 @@ export const deleteSMEIPOById = async (req, res) => {
         serverErrorHandler(error, res);
     }
 };
+
+export const deleteSMEBulk = async (req, res) => {
+    try {
+        const { ids } = req.body;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ success: false, message: "Invalid or empty IDs array" });
+        }
+
+        const result = await Mainboard.deleteMany({ _id: { $in: ids }, ipoType: 'SME' });
+
+        res.status(200).json({
+            success: true,
+            message: `${result.deletedCount} SME IPOs deleted successfully`,
+            deletedCount: result.deletedCount
+        });
+    } catch (error) {
+        serverErrorHandler(error, res);
+    }
+};

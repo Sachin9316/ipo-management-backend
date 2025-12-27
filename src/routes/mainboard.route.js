@@ -5,7 +5,8 @@ import {
     getAllMainboards,
     getMainboardById,
     updateMainboardById,
-    deleteMainboardById
+    deleteMainboardById,
+    deleteMainboardBulk
 } from '../controllers/mainboard.controller.js';
 import { ipoCreateSchema, ipoUpdateSchema } from '../schema/mainboard.schema.js';
 import { zodValidate } from '../middlewares/zod.middleware.js';
@@ -18,5 +19,6 @@ mainboardRoute.get('/mainboards', getAllMainboards);
 mainboardRoute.get('/mainboard/:id', getMainboardById);
 mainboardRoute.patch("/mainboard/:id", upload.single('icon'), parseJsonFields, zodValidate(ipoUpdateSchema), updateMainboardById);
 mainboardRoute.delete('/mainboard/:id', deleteMainboardById);
+mainboardRoute.post('/mainboards/bulk-delete', deleteMainboardBulk);
 
 export default mainboardRoute;

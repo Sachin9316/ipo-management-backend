@@ -5,7 +5,8 @@ import {
     getAllRegistrars,
     getRegistrarDetails,
     updateRegistrar,
-    deleteRegistrar
+    deleteRegistrar,
+    deleteRegistrarsBulk
 } from '../controllers/registrar.controller.js';
 
 import { protect, admin } from '../middlewares/auth.middleware.js';
@@ -13,6 +14,9 @@ import { protect, admin } from '../middlewares/auth.middleware.js';
 router.route('/registrars')
     .get(getAllRegistrars)
     .post(protect, admin, createRegistrar);
+
+router.route('/registrars/bulk-delete')
+    .post(protect, admin, deleteRegistrarsBulk);
 
 router.route('/registrars/:id')
     .get(getRegistrarDetails)

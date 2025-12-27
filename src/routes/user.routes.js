@@ -5,6 +5,7 @@ import {
     getUserProfile,
     updateUser,
     deleteUser,
+    deleteUsersBulk,
     toggleWatchlist,
     getWatchlist
 } from "../controllers/user.controller.js";
@@ -28,6 +29,9 @@ router.route("/profile/watchlist")
 
 router.route("/customers")
     .get(protect, admin, getCustomers);
+
+router.route("/bulk-delete")
+    .post(protect, admin, deleteUsersBulk);
 
 router.route("/")
     .get(protect, admin, getUsers);

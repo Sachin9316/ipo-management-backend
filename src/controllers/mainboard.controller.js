@@ -216,6 +216,25 @@ export const deleteMainboardById = async (req, res) => {
     }
 };
 
+export const deleteMainboardBulk = async (req, res) => {
+    try {
+        const { ids } = req.body;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ success: false, message: "Invalid or empty IDs array" });
+        }
+
+        const result = await Mainboard.deleteMany({ _id: { $in: ids } });
+
+        res.status(200).json({
+            success: true,
+            message: `${result.deletedCount} Mainboard IPOs deleted successfully`,
+            deletedCount: result.deletedCount
+        });
+    } catch (error) {
+        serverErrorHandler(error, res);
+    }
+};
+
 export const getListedIPOs = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;

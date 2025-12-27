@@ -98,3 +98,22 @@ export const deleteRegistrar = async (req, res) => {
         serverErrorHandler(error, res);
     }
 };
+
+export const deleteRegistrarsBulk = async (req, res) => {
+    try {
+        const { ids } = req.body;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ success: false, message: "Invalid or empty IDs array" });
+        }
+
+        const result = await Registrar.deleteMany({ _id: { $in: ids } });
+
+        res.status(200).json({
+            success: true,
+            message: `${result.deletedCount} registrars deleted successfully`,
+            deletedCount: result.deletedCount
+        });
+    } catch (error) {
+        serverErrorHandler(error, res);
+    }
+};

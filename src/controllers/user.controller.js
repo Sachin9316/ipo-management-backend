@@ -236,3 +236,22 @@ export const toggleWatchlist = async (req, res) => {
         res.status(500).json({ message: "Server Error" });
     }
 };
+
+export const deleteUsersBulk = async (req, res) => {
+    try {
+        const { ids } = req.body;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ message: "Invalid or empty IDs array" });
+        }
+
+        const result = await User.deleteMany({ _id: { $in: ids } });
+
+        res.status(200).json({
+            message: `${result.deletedCount} users removed`,
+            deletedCount: result.deletedCount
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
