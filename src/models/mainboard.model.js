@@ -13,6 +13,7 @@ const mainboardSchema = new mongoose.Schema({
             date: { type: Date, default: Date.now },
         }
     ],
+    issueSize: { type: String },
     subscription: {
         qib: { type: Number, default: 0 },
         nii: { type: Number, default: 0 },

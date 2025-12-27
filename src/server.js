@@ -28,6 +28,11 @@ app.use('/api/auth', authRoutes);
 app.use('/api/registrars', registrarRoutes);
 app.use('/api/users', userRoutes);
 
+import swaggerUi from 'swagger-ui-express';
+import swaggerSpec from './config/swagger.js';
+
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
