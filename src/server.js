@@ -23,6 +23,7 @@ app.get('/', (req, res) => {
 
 app.use('/api/mainboard', mainboardRoute);
 app.use('/api/sme', smeRoute);
+app.use('/api/listed', listedRoute);
 app.use('/api/auth', authRoutes);
 app.use('/api/registrars', registrarRoutes);
 app.use('/api/users', userRoutes);
