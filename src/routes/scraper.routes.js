@@ -1,5 +1,5 @@
 import express from 'express';
-import { previewScrapedData, syncScrapedData } from '../controllers/scraper.controller.js';
+import { previewScrapedData, syncScrapedData, syncGMPData } from '../controllers/scraper.controller.js';
 import { protect, admin } from '../middlewares/auth.middleware.js';
 
 const router = express.Router();
@@ -43,5 +43,19 @@ router.get('/preview', protect, admin, previewScrapedData);
  *         description: Sync completed successfully
  */
 router.post('/sync', protect, admin, syncScrapedData);
+
+/**
+ * @swagger
+ * /api/scraper/sync-gmp:
+ *   post:
+ *     summary: Scrape and update GMP data (Admin only)
+ *     tags: [Scraper]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: GMP sync completed successfully
+ */
+router.post('/sync-gmp', protect, admin, syncGMPData);
 
 export default router;

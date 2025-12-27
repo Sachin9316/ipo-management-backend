@@ -1,4 +1,5 @@
 import { scrapeIPOData, scrapeAndSaveIPOData } from '../services/scraper.service.js';
+import { syncAllGMPData } from '../services/gmp-scraper.service.js';
 
 export const previewScrapedData = async (req, res) => {
     try {
@@ -33,6 +34,22 @@ export const syncScrapedData = async (req, res) => {
         res.status(500).json({
             success: false,
             message: `Sync failed: ${error.message}`
+        });
+    }
+};
+
+export const syncGMPData = async (req, res) => {
+    try {
+        const result = await syncAllGMPData();
+        res.status(200).json({
+            success: true,
+            message: `GMP sync completed. Updated ${result.updatedCount} IPOs.`,
+            details: result
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: `GMP Sync failed: ${error.message}`
         });
     }
 };

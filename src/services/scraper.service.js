@@ -2,14 +2,9 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 import slugify from 'slugify';
 import Mainboard from '../models/mainboard.model.js';
+import { isMatch, parseCurrency } from '../utils/matching.js';
 
 const BASE_URL = 'https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/';
-
-// Helper: Clean currency strings (e.g., "₹ 12,000" -> 12000)
-const parseCurrency = (str) => {
-    if (!str) return 0;
-    return parseFloat(str.replace(/[₹,]/g, '').trim()) || 0;
-};
 
 // Helper: Parse Date (e.g., "26-Dec" or "December 26, 2025" -> Date object)
 const parseDate = (str) => {
@@ -164,14 +159,6 @@ export const scrapeIPOData = async (limit = 3) => {
 
 import { scrapeChittorgarhSubscription } from './chittorgarh.service.js';
 
-
-// Helper for fuzzy matching names
-const isMatch = (name1, name2) => {
-    if (!name1 || !name2) return false;
-    const clean = n => n.toLowerCase().replace(/[^a-z0-9]/g, '');
-    return clean(name1).includes(clean(name2)) || clean(name2).includes(clean(name1));
-};
-
 export const scrapeAndSaveIPOData = async (limit = 3) => {
     try {
         console.log("Step 1: Scraping basic IPO data from IPOWatch...");
@@ -201,17 +188,32 @@ export const scrapeAndSaveIPOData = async (limit = 3) => {
                 // Enhanced Logic for Allotment Status
                 // If we have an allotment date in the past, or specific flags (to be added)
                 // For now, simple date check is a good fallback if "Allotment Out" text isn't explicitly found
-                if (new Date(ipo.allotment_date) < new Date()) {
+                if (new Date(ipo.allotment_date).setHours(0, 0, 0, 0) <= new Date().setHours(0, 0, 0, 0)) {
                     // Check if not explicitly set to false by scraper
                     if (ipo.isAllotmentOut === undefined) ipo.isAllotmentOut = true;
                 }
 
                 // Upsert: Update if exists, Insert if new
-                await Mainboard.findOneAndUpdate(
-                    { slug: ipo.slug },
-                    { $set: ipo },
-                    { upsert: true, new: true, setDefaultsOnInsert: true }
-                );
+                const existingIPO = await Mainboard.findOne({ slug: ipo.slug });
+                if (existingIPO) {
+                    // Update only if gmp changed
+                    const latestGmp = existingIPO.gmp && existingIPO.gmp.length > 0 ? existingIPO.gmp[existingIPO.gmp.length - 1] : null;
+                    const newGmpPrice = ipo.gmp[0].price;
+
+                    if (!latestGmp || latestGmp.price !== newGmpPrice) {
+                        existingIPO.gmp.push(ipo.gmp[0]);
+                        if (existingIPO.gmp.length > 30) existingIPO.gmp.shift();
+                    }
+
+                    // Update other fields but preserve gmp array
+                    const { gmp, ...otherData } = ipo;
+                    await Mainboard.updateOne(
+                        { slug: ipo.slug },
+                        { $set: { ...otherData, gmp: existingIPO.gmp } }
+                    );
+                } else {
+                    await Mainboard.create(ipo);
+                }
                 savedCount++;
             } catch (err) {
                 console.error(`Failed to save IPO ${ipo.companyName}:`, err.message);

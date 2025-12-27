@@ -9,12 +9,25 @@ import listedRoute from './routes/listed.route.js';
 import authRoutes from './routes/auth.routes.js';
 import userRoutes from './routes/user.routes.js';
 import scraperRoutes from './routes/scraper.routes.js';
+import cron from 'node-cron';
+import { syncAllGMPData } from './services/gmp-scraper.service.js';
 
 import registrarRoutes from './routes/registrar.routes.js';
 
 const PORT = process.env.PORT || 5000;
 const app = express();
 dbConnect();
+
+// Cron Job: Every 60 minutes
+cron.schedule('0 * * * *', async () => {
+    console.log('Running scheduled GMP Sync...');
+    try {
+        await syncAllGMPData();
+        console.log('Scheduled GMP Sync completed successfully.');
+    } catch (error) {
+        console.error('Scheduled GMP Sync failed:', error.message);
+    }
+});
 
 app.use(cors());
 app.use(express.json());
