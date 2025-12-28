@@ -11,6 +11,7 @@ import userRoutes from './routes/user.routes.js';
 import scraperRoutes from './routes/scraper.routes.js';
 import cron from 'node-cron';
 import { syncAllGMPData } from './services/gmp-scraper.service.js';
+import { scrapeAndSaveIPOData } from './services/scraper.service.js';
 
 import registrarRoutes from './routes/registrar.routes.js';
 
@@ -19,13 +20,25 @@ const app = express();
 dbConnect();
 
 // Cron Job: Every 60 minutes
-cron.schedule('0 * * * *', async () => {
+// Cron Job: Every 15 minutes for GMP
+cron.schedule('*/15 * * * *', async () => {
     console.log('Running scheduled GMP Sync...');
     try {
         await syncAllGMPData();
         console.log('Scheduled GMP Sync completed successfully.');
     } catch (error) {
         console.error('Scheduled GMP Sync failed:', error.message);
+    }
+});
+
+// Cron Job: Every 15 minutes for IPO Sync
+cron.schedule('*/15 * * * *', async () => {
+    console.log('Running scheduled IPO Sync...');
+    try {
+        await scrapeAndSaveIPOData(10);
+        console.log('Scheduled IPO Sync completed successfully.');
+    } catch (error) {
+        console.error('Scheduled IPO Sync failed:', error.message);
     }
 });
 

@@ -68,16 +68,44 @@ export const scrapeGMPFromIPOWatch = async () => {
         const $ = cheerio.load(data);
         const gmpData = [];
 
-        $('figure.wp-block-table table tbody tr').each((i, el) => {
-            const cols = $(el).find('td');
-            if (cols.length >= 2) {
-                const companyName = $(cols[0]).text().trim();
-                const gmpVal = parseCurrency($(cols[1]).text().trim());
-                if (companyName) {
-                    gmpData.push({ companyName, gmp: gmpVal, source: 'IPOWatch' });
+        // Iterate over tables instead of rows directly to handle different headers
+        $('figure.wp-block-table table').each((tableIdx, table) => {
+            let gmpIndex = -1;
+            const rows = $(table).find('tr');
+            if (rows.length === 0) return;
+
+            // Find GMP column index from header (first row)
+            const headerCols = $(rows[0]).find('td, th');
+            headerCols.each((colIdx, col) => {
+                const text = $(col).text().toLowerCase();
+                if (text.includes('gmp') || text.includes('premium')) {
+                    gmpIndex = colIdx;
                 }
+            });
+
+            if (gmpIndex === -1 && rows.length > 1) {
+                // Fallback: If header is not in first row (unlikely but possible), try guessing?
+                // For now, if no header found, we skip to avoid bad data like Price being mistaken for GMP
+                // Or check if it's the specific layout we know
+                // Usually Table 1 (SME) has GMP at 1, Table 2 (Mainboard) has GMP at 2
+                // We could use heuristics if dynamic check fails, but dynamic is safer.
+                // console.warn(`No GMP header found in Table ${tableIdx}`);
+                return;
             }
+
+            rows.each((rowIdx, row) => {
+                if (rowIdx === 0) return; // Skip header
+                const cols = $(row).find('td');
+                if (cols.length > gmpIndex) {
+                    const companyName = $(cols[0]).text().trim();
+                    const gmpVal = parseCurrency($(cols[gmpIndex]).text().trim());
+                    if (companyName) {
+                        gmpData.push({ companyName, gmp: gmpVal, source: 'IPOWatch' });
+                    }
+                }
+            });
         });
+
         return gmpData;
     } catch (error) {
         console.error('IPOWatch Scrape Error:', error.message);
@@ -111,7 +139,7 @@ export const syncAllGMPData = async () => {
         });
 
         const activeIpos = await Mainboard.find({
-            status: { $in: ['UPCOMING', 'OPEN', 'CLOSED'] }
+            status: { $in: ['UPCOMING', 'OPEN', 'CLOSED', 'LISTED'] }
         });
 
         console.log(`Processing ${activeIpos.length} active IPOs for GMP updates...`);

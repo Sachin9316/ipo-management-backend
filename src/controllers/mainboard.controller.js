@@ -74,7 +74,7 @@ export const createMainboard = async (req, res) => {
 export const getAllMainboards = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 10;
+        const limit = parseInt(req.query.limit) || 1000;
         const skip = (page - 1) * limit;
 
         const filter = {}; // Defaults to empty filter to allow searching ALL types if needed
@@ -111,7 +111,7 @@ export const getAllMainboards = async (req, res) => {
         }
         console.log("Applied Filter:", filter);
 
-        const mainboards = await Mainboard.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit);
+        const mainboards = await Mainboard.find(filter).sort({ open_date: -1 }).skip(skip).limit(limit);
         const total = await Mainboard.countDocuments(filter);
         const totalPages = Math.ceil(total / limit);
 
@@ -238,10 +238,10 @@ export const deleteMainboardBulk = async (req, res) => {
 export const getListedIPOs = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 10;
+        const limit = parseInt(req.query.limit) || 1000;
         const skip = (page - 1) * limit;
 
-        const listedIPOs = await Mainboard.find({ status: 'LISTED' }).skip(skip).limit(limit);
+        const listedIPOs = await Mainboard.find({ status: 'LISTED' }).sort({ listing_date: -1 }).skip(skip).limit(limit);
         const total = await Mainboard.countDocuments({ status: 'LISTED' });
         const totalPages = Math.ceil(total / limit);
 

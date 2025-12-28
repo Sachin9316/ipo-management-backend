@@ -69,7 +69,7 @@ export const createSMEIPO = async (req, res) => {
 export const getAllSMEIPOs = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 10;
+        const limit = parseInt(req.query.limit) || 1000;
         const skip = (page - 1) * limit;
 
         const filter = { ipoType: 'SME' };
@@ -86,7 +86,7 @@ export const getAllSMEIPOs = async (req, res) => {
             ];
         }
 
-        const smeIPOs = await Mainboard.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit);
+        const smeIPOs = await Mainboard.find(filter).sort({ open_date: -1 }).skip(skip).limit(limit);
         const total = await Mainboard.countDocuments(filter);
         const totalPages = Math.ceil(total / limit);
 

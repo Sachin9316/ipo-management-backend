@@ -36,8 +36,8 @@ export const scrapeIPOData = async (limit = 3) => {
 
         const ipos = [];
         // The main GMP table is usually the first table in a figure
-        const rows = $('figure.wp-block-table table tbody tr').slice(0, limit);
-        console.log(`Found ${rows.length} rows in the main table.`);
+        const rows = $('figure.wp-block-table table tbody tr').slice(0, limit + 5); // Take a few extra to account for headers
+        console.log(`Found ${rows.length} raw rows.`);
 
         for (const element of rows) {
             const row = $(element);
@@ -68,11 +68,25 @@ export const scrapeIPOData = async (limit = 3) => {
                     let val = null;
                     $$('table tr').each((i, el) => {
                         const th = $$(el).find('td:nth-child(1)').text().trim(); // Labels are often in first td
-                        if (th.toLowerCase().includes(label.toLowerCase())) {
+                        // Remove trailing colons for better matching
+                        const cleanTh = th.replace(/:$/, '').trim();
+                        if (cleanTh.toLowerCase().includes(label.toLowerCase()) ||
+                            label.toLowerCase().includes(cleanTh.toLowerCase())) {
                             val = $$(el).find('td:nth-child(2)').text().trim();
                         }
                     });
                     return val;
+                };
+
+                const getTableLink = (label) => {
+                    let link = "";
+                    $$('table tr').each((i, el) => {
+                        const th = $$(el).find('td:nth-child(1)').text().trim();
+                        if (th.toLowerCase().includes(label.toLowerCase())) {
+                            link = $$(el).find('td:nth-child(2) a').attr('href') || "";
+                        }
+                    });
+                    return link;
                 };
 
                 // Extract Dates
@@ -82,6 +96,10 @@ export const scrapeIPOData = async (limit = 3) => {
                 const listingDate = parseDate(getTableValue('IPO Listing Date') || getTableValue('Listing Date'));
                 const allotmentDate = parseDate(getTableValue('Basis of Allotment'));
                 const refundDate = parseDate(getTableValue('Refunds')); // "Refunds:"
+
+                // Prospectus Links
+                const drhpLink = getTableLink('DRHP Draft Prospectus');
+                const rhpLink = getTableLink('RHP Draft Prospectus');
 
                 // Financials / Lot
                 const issueSize = getTableValue('Issue Size'); // "Approx ₹42.60 Crores"
@@ -97,8 +115,10 @@ export const scrapeIPOData = async (limit = 3) => {
                     }
                 });
 
-                const priceRange = getTableValue('IPO Price Band') || priceStr; // "₹227 to ₹239 Per Share"
-                const priceMatch = priceRange.match(/(\d+)(?:\s*to\s*(\d+))?/);
+                const priceRange = getTableValue('IPO Price Band') || getTableValue('Price Band') || priceStr; // "₹227 to ₹239 Per Share"
+                const cleanPriceRange = priceRange.replace(/,/g, '');
+                // Match numbers, handle "to" with optional symbols in between
+                const priceMatch = cleanPriceRange.match(/(\d+(?:\.\d+)?)(?:\s*to\s*[^\d]*(\d+(?:\.\d+)?))?/);
                 const minPrice = priceMatch ? parseFloat(priceMatch[1]) : parseCurrency(priceStr);
                 const maxPrice = priceMatch && priceMatch[2] ? parseFloat(priceMatch[2]) : minPrice;
 
@@ -138,11 +158,13 @@ export const scrapeIPOData = async (limit = 3) => {
                     max_price: maxPrice,
                     bse_code_nse_code: "Link",
                     isAllotmentOut: false,
-                    drhp_pdf: "",
-                    rhp_pdf: ""
+                    drhp_pdf: drhpLink,
+                    rhp_pdf: rhpLink,
+                    link: link
                 };
 
                 ipos.push(ipoData);
+                if (ipos.length >= limit) break;
 
             } catch (detailError) {
                 console.error(`Error scraping details for ${name}:`, detailError.message);
@@ -175,26 +197,76 @@ export const scrapeAndSaveIPOData = async (limit = 3) => {
             try {
                 // Merge Subscription Data
                 const subInfo = subscriptionData.find(s => isMatch(s.companyName, ipo.companyName));
-                if (subInfo) {
-                    console.log(`Found subscription data for ${ipo.companyName}`);
+                if (subInfo && subInfo.total > 0) {
+                    console.log(`Found subscription data for ${ipo.companyName} from Chittorgarh`);
                     ipo.subscription = {
                         qib: subInfo.qib || 0,
                         nii: subInfo.nii || 0,
                         retail: subInfo.retail || 0,
                         total: subInfo.total || 0
                     };
-                }
+                } else {
+                    // Fallback: Try to scrape from IPOWatch dedicated subscription page
+                    try {
+                        console.log(`Looking for fallback subscription for ${ipo.companyName}...`);
+                        // Standard pattern for subscription page: [slug]-subscription-status/
+                        // Derive base slug from the detail link
+                        const linkSlug = ipo.link.split('/').filter(Boolean).pop();
+                        const baseSlug = linkSlug.replace(/-date-review-price-allotment-details$/, '')
+                            .replace(/-allotment-details$/, '')
+                            .replace(/-allotment-status$/, '');
 
-                // Enhanced Logic for Allotment Status
-                // If we have an allotment date in the past, or specific flags (to be added)
-                // For now, simple date check is a good fallback if "Allotment Out" text isn't explicitly found
-                if (new Date(ipo.allotment_date).setHours(0, 0, 0, 0) <= new Date().setHours(0, 0, 0, 0)) {
-                    // Check if not explicitly set to false by scraper
-                    if (ipo.isAllotmentOut === undefined) ipo.isAllotmentOut = true;
+                        const subUrls = [
+                            `https://ipowatch.in/${baseSlug}-subscription-status/`,
+                            `https://ipowatch.in/${ipo.slug}-ipo-subscription-status/`,
+                            ipo.link.replace('-allotment-details/', '-subscription-status/')
+                        ];
+
+                        let fetchedSub = false;
+                        for (const subUrl of subUrls) {
+                            try {
+                                const { data: subHtml } = await axios.get(subUrl);
+                                const $$$ = cheerio.load(subHtml);
+
+                                $$$('table tr').each((i, el) => {
+                                    const cols = $$$(el).find('td');
+                                    if (cols.length >= 2) {
+                                        const category = $$$(cols[0]).text().trim().toUpperCase();
+                                        const totalVal = parseFloat($$$(cols[cols.length - 1]).text().trim().replace(/,/g, '')) || 0;
+
+                                        if (category.includes('QIB')) ipo.subscription.qib = totalVal;
+                                        else if (category.includes('NII')) ipo.subscription.nii = totalVal;
+                                        else if (category.includes('RETAIL') || category.includes('RII')) ipo.subscription.retail = totalVal;
+                                        else if (category.includes('TOTAL')) ipo.subscription.total = totalVal;
+                                    }
+                                });
+                                if (ipo.subscription.total > 0) {
+                                    console.log(`Found fallback subscription for ${ipo.companyName} from ${subUrl}`);
+                                    fetchedSub = true;
+                                    break;
+                                }
+                            } catch (e) {
+                                // Continue to next pattern
+                            }
+                        }
+                    } catch (subErr) {
+                        // console.log(`No fallback subscription page for ${ipo.companyName}`);
+                    }
                 }
 
                 // Upsert: Update if exists, Insert if new
                 const existingIPO = await Mainboard.findOne({ slug: ipo.slug });
+
+                // Enhanced Logic for Allotment Status
+                // 1. If date passed, set to true
+                if (new Date(ipo.allotment_date).setHours(0, 0, 0, 0) <= new Date().setHours(0, 0, 0, 0)) {
+                    ipo.isAllotmentOut = true;
+                }
+                // 2. If already true in DB, keep it true (don't overwrite with false)
+                if (existingIPO && existingIPO.isAllotmentOut) {
+                    ipo.isAllotmentOut = true;
+                }
+
                 if (existingIPO) {
                     // Update only if gmp changed
                     const latestGmp = existingIPO.gmp && existingIPO.gmp.length > 0 ? existingIPO.gmp[existingIPO.gmp.length - 1] : null;
