@@ -151,7 +151,8 @@ export const scrapeIPOData = async (limit = 3) => {
                     refund_date: refundDate || new Date(),
                     allotment_date: allotmentDate || new Date(),
                     registrarName: registrarName,
-                    registrarLink: "",
+                    registrarName: registrarName,
+                    registrarLink: getTableLink('Registrar'),
                     lot_size: lotShares || 0,
                     lot_price: (lotShares || 0) * maxPrice,
                     min_price: minPrice,
@@ -180,11 +181,24 @@ export const scrapeIPOData = async (limit = 3) => {
 };
 
 import { scrapeChittorgarhSubscription } from './chittorgarh.service.js';
+import { scrapeChittorgarhIPOs } from './chittorgarh-list.service.js';
 
 export const scrapeAndSaveIPOData = async (limit = 3) => {
     try {
-        console.log("Step 1: Scraping basic IPO data from IPOWatch...");
-        const ipos = await scrapeIPOData(limit);
+        console.log("Step 1a: Scraping basic IPO data from IPOWatch...");
+        const ipowatchIpos = await scrapeIPOData(limit);
+
+        console.log("Step 1b: Scraping basic IPO data from Chittorgarh...");
+        const chittorgarhIpos = await scrapeChittorgarhIPOs(limit);
+
+        // Merge and deduplicate by slug (prefer IPOWatch if conflict, or just merge)
+        // We put Chittorgarh first, then IPOWatch overwrites in Map if duplicate slug
+        const ipoMap = new Map();
+        chittorgarhIpos.forEach(ipo => ipoMap.set(ipo.slug, ipo));
+        ipowatchIpos.forEach(ipo => ipoMap.set(ipo.slug, ipo));
+
+        const ipos = Array.from(ipoMap.values());
+        console.log(`Total IPOs to process: ${ipos.length}`);
 
         console.log("Step 2: Scraping live subscription data from Chittorgarh...");
         const subscriptionData = await scrapeChittorgarhSubscription();
@@ -268,13 +282,16 @@ export const scrapeAndSaveIPOData = async (limit = 3) => {
                 }
 
                 if (existingIPO) {
-                    // Update only if gmp changed
-                    const latestGmp = existingIPO.gmp && existingIPO.gmp.length > 0 ? existingIPO.gmp[existingIPO.gmp.length - 1] : null;
-                    const newGmpPrice = ipo.gmp[0].price;
+                    // Update only if gmp changed and it is an SME IPO
+                    // Mainboard IPOs have manual GMP entry now
+                    if (ipo.ipoType === 'SME') {
+                        const latestGmp = existingIPO.gmp && existingIPO.gmp.length > 0 ? existingIPO.gmp[existingIPO.gmp.length - 1] : null;
+                        const newGmpPrice = ipo.gmp[0].price;
 
-                    if (!latestGmp || latestGmp.price !== newGmpPrice) {
-                        existingIPO.gmp.push(ipo.gmp[0]);
-                        if (existingIPO.gmp.length > 30) existingIPO.gmp.shift();
+                        if (!latestGmp || latestGmp.price !== newGmpPrice) {
+                            existingIPO.gmp.push(ipo.gmp[0]);
+                            if (existingIPO.gmp.length > 30) existingIPO.gmp.shift();
+                        }
                     }
 
                     // Update other fields but preserve gmp array
@@ -284,6 +301,10 @@ export const scrapeAndSaveIPOData = async (limit = 3) => {
                         { $set: { ...otherData, gmp: existingIPO.gmp } }
                     );
                 } else {
+                    // Start new Mainboard IPOs with empty GMP for manual entry
+                    if (ipo.ipoType !== 'SME') {
+                        ipo.gmp = [];
+                    }
                     await Mainboard.create(ipo);
                 }
                 savedCount++;

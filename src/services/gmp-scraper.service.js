@@ -139,7 +139,8 @@ export const syncAllGMPData = async () => {
         });
 
         const activeIpos = await Mainboard.find({
-            status: { $in: ['UPCOMING', 'OPEN', 'CLOSED', 'LISTED'] }
+            status: { $in: ['UPCOMING', 'OPEN', 'CLOSED', 'LISTED'] },
+            ipoType: 'SME'
         });
 
         console.log(`Processing ${activeIpos.length} active IPOs for GMP updates...`);
