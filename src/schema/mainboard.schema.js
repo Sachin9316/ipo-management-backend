@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+const safeBoolean = z.preprocess((val) => {
+    if (typeof val === 'string') {
+        return val === 'true';
+    }
+    return Boolean(val);
+}, z.boolean());
+
+
 export const ipoCreateSchema = z.object({
     body: z.object({
         companyName: z.string().min(1, "Company name is required"),
@@ -29,7 +37,7 @@ export const ipoCreateSchema = z.object({
         lot_size: z.coerce.number(),
         lot_price: z.coerce.number(),
         bse_code_nse_code: z.string(),
-        isAllotmentOut: z.coerce.boolean(),
+        isAllotmentOut: safeBoolean,
         rhp_pdf: z.string().optional(),
         drhp_pdf: z.string().optional(),
         financials: z.object({
@@ -77,7 +85,7 @@ export const ipoUpdateSchema = z.object({
         lot_size: z.coerce.number().optional(),
         lot_price: z.coerce.number().optional(),
         bse_code_nse_code: z.string().optional(),
-        isAllotmentOut: z.coerce.boolean().optional(),
+        isAllotmentOut: safeBoolean.optional(),
         subscription: z.object({
             qib: z.coerce.number().optional(),
             nii: z.coerce.number().optional(),

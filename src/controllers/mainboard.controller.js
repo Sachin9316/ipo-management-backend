@@ -13,7 +13,7 @@ const uploadToCloudinary = (buffer) => {
                 height: 200,
                 crop: "fill",
                 gravity: "center",
-                format: "webp" // Optional: force webp for better performance
+                format: "webp"
             },
             (error, result) => {
                 if (error) return reject(error);
@@ -32,20 +32,16 @@ export const createMainboard = async (req, res) => {
             mainboardData.slug = mainboardData.companyName.toLowerCase().replace(/ /g, "-");
         }
 
-        // Handle Image Upload
         if (req.file) {
             try {
                 const result = await uploadToCloudinary(req.file.buffer);
                 mainboardData.icon = result.secure_url;
-                // Optional: Store cloudinaryId if you want to delete it later
-                // mainboardData.cloudinaryId = result.public_id;
             } catch (uploadError) {
                 console.error("Image upload failed:", uploadError);
                 return res.status(500).json({ success: false, message: "Image upload failed" });
             }
         }
 
-        // Force ipoType to MAINBOARD
         mainboardData.ipoType = 'MAINBOARD';
 
         const newMainboard = new Mainboard(mainboardData);
@@ -77,15 +73,7 @@ export const getAllMainboards = async (req, res) => {
         const limit = parseInt(req.query.limit) || 1000;
         const skip = (page - 1) * limit;
 
-        const filter = {}; // Defaults to empty filter to allow searching ALL types if needed
-
-        // If not searching, we might want to default to MAINBOARD to preserve existing behavior for tabs
-        // But for consistency let's stick to explicit requests or default behavior.
-        // Existing behavior: "const filter = { ipoType: 'MAINBOARD' };"
-
-        // Revised Logic:
-        // Always default to MAINBOARD unless ipoType is explicitly ALL.
-        // Even if searching, we should respect the type boundary unless told otherwise.
+        const filter = {};
 
         if (!req.query.ipoType || req.query.ipoType.toUpperCase() !== 'ALL') {
             filter.ipoType = 'MAINBOARD';
@@ -106,8 +94,6 @@ export const getAllMainboards = async (req, res) => {
                 { companyName: searchRegex },
                 { bse_code_nse_code: searchRegex }
             ];
-            // If searching, we typically want to search ALL types unless restricted
-            // The logic above ensures that if 'search' is present, we DON'T auto-set MAINBOARD.
         }
         console.log("Applied Filter:", filter);
 
@@ -166,6 +152,30 @@ export const updateMainboardById = async (req, res) => {
                 console.error("Image upload failed:", uploadError);
                 return res.status(500).json({ success: false, message: "Image upload failed" });
             }
+        }
+
+        // SMART MERGE: Prevent accidental zeroing of subscription data
+        // Fetch existing document first
+        const existingMainboard = await Mainboard.findById(id);
+        if (!existingMainboard) {
+            return res.status(404).json({ success: false, message: "Mainboard not found" });
+        }
+
+        if (updateData.subscription) {
+            const existingSub = existingMainboard.subscription || {};
+            const newSub = updateData.subscription;
+
+            // Keys to check for zero-overwrite protection
+            const subKeys = ['qib', 'nii', 'bnii', 'snii', 'retail', 'employee', 'total'];
+
+            subKeys.forEach(key => {
+                // If incoming is 0 (likely default/missing in form) AND existing is > 0, keep existing
+                if (Number(newSub[key]) === 0 && Number(existingSub[key]) > 0) {
+                    newSub[key] = existingSub[key];
+                }
+            });
+
+            updateData.subscription = newSub;
         }
 
         const updatedMainboard = await Mainboard.findByIdAndUpdate(

@@ -45,7 +45,10 @@ export const scrapeChittorgarhSubscription = async () => {
                         companyName: item['Company Name'],
                         qib: parseFloat(item['QIB (x)']) || 0,
                         nii: parseFloat(item['NII (x)']) || 0,
+                        snii: parseFloat(item['sNII (x)']) || 0,
+                        bnii: parseFloat(item['bNII (x)']) || 0,
                         retail: parseFloat(item['Retail (x)']) || 0,
+                        employee: parseFloat(item['Employee (x)']) || 0,
                         total: parseFloat(item['Total (x)']) || 0,
                         applications: item['Applications'] || '0'
                     }));

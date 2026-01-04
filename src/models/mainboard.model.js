@@ -1,5 +1,12 @@
 import mongoose from "mongoose";
 
+const setTwoDecimal = (val) => {
+    if (typeof val === 'number') {
+        return Math.round(val * 100) / 100;
+    }
+    return val;
+};
+
 const mainboardSchema = new mongoose.Schema({
     companyName: { type: String, required: true },
     slug: { type: String, required: true, unique: true },
@@ -8,20 +15,20 @@ const mainboardSchema = new mongoose.Schema({
     status: { type: String, required: true },
     gmp: [
         {
-            price: { type: Number },
+            price: { type: Number, set: setTwoDecimal },
             kostak: { type: String },
             date: { type: Date, default: Date.now },
         }
     ],
     issueSize: { type: String },
     subscription: {
-        qib: { type: Number, default: 0 },
-        nii: { type: Number, default: 0 },
-        bnii: { type: Number, default: 0 }, // HNI (>10L)
-        snii: { type: Number, default: 0 }, // SNI (<10L)
-        retail: { type: Number, default: 0 },
-        employee: { type: Number, default: 0 },
-        total: { type: Number, default: 0 },
+        qib: { type: Number, default: 0, set: setTwoDecimal },
+        nii: { type: Number, default: 0, set: setTwoDecimal },
+        bnii: { type: Number, default: 0, set: setTwoDecimal }, // HNI (>10L)
+        snii: { type: Number, default: 0, set: setTwoDecimal }, // SNI (<10L)
+        retail: { type: Number, default: 0, set: setTwoDecimal },
+        employee: { type: Number, default: 0, set: setTwoDecimal },
+        total: { type: Number, default: 0, set: setTwoDecimal },
     },
     open_date: { type: Date, required: true },
     close_date: { type: Date, required: true },
@@ -31,17 +38,16 @@ const mainboardSchema = new mongoose.Schema({
     registrarName: { type: String },
     registrarLink: { type: String },
     lot_size: { type: Number, required: true },
-    lot_price: { type: Number, required: true },
-    min_price: { type: Number },
-    max_price: { type: Number },
-    bse_code_nse_code: { type: String, required: true },
+    lot_price: { type: Number, required: true, set: setTwoDecimal },
+    min_price: { type: Number, set: setTwoDecimal },
+    max_price: { type: Number, set: setTwoDecimal },
     isAllotmentOut: { type: Boolean, required: true },
     rhp_pdf: { type: String },
     drhp_pdf: { type: String },
     financials: {
-        revenue: { type: Number },
-        profit: { type: Number },
-        eps: { type: Number },
+        revenue: { type: Number, set: setTwoDecimal },
+        profit: { type: Number, set: setTwoDecimal },
+        eps: { type: Number, set: setTwoDecimal },
         valuation: { type: String }
     },
     swot: {
@@ -51,10 +57,10 @@ const mainboardSchema = new mongoose.Schema({
         threats: { type: [String] }
     },
     listing_info: {
-        listing_price: { type: Number },
-        listing_gain: { type: Number },
-        day_high: { type: Number },
-        day_low: { type: Number }
+        listing_price: { type: Number, set: setTwoDecimal },
+        listing_gain: { type: Number, set: setTwoDecimal },
+        day_high: { type: Number, set: setTwoDecimal },
+        day_low: { type: Number, set: setTwoDecimal }
     }
 }, {
     timestamps: true,

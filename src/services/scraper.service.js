@@ -2,7 +2,10 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 import slugify from 'slugify';
 import Mainboard from '../models/mainboard.model.js';
-import { isMatch, parseCurrency } from '../utils/matching.js';
+import { isMatch, parseCurrency, parseIssueSize, roundToTwo } from '../utils/matching.js';
+// ... (imports remain the same, just updating line 5)
+
+// ...
 
 const BASE_URL = 'https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/';
 
@@ -102,7 +105,8 @@ export const scrapeIPOData = async (limit = 3) => {
                 const rhpLink = getTableLink('RHP Draft Prospectus');
 
                 // Financials / Lot
-                const issueSize = getTableValue('Issue Size'); // "Approx ₹42.60 Crores"
+                const issueSizeRaw = getTableValue('Issue Size');
+                const issueSize = parseIssueSize(issueSizeRaw);
 
                 // For Lot Size, we need to find the "Market Lot" or "Lot Size" table specifically
                 // We'll search for the row starting with "Retail Minimum" and take the 3rd column (Shares)
@@ -138,7 +142,7 @@ export const scrapeIPOData = async (limit = 3) => {
                         kostak: "0",
                         date: new Date()
                     }],
-                    issueSize: issueSize || "N/A",
+                    issueSize: issueSize || "0.00",
                     subscription: {
                         qib: 0,
                         nii: 0,
@@ -157,7 +161,6 @@ export const scrapeIPOData = async (limit = 3) => {
                     lot_price: (lotShares || 0) * maxPrice,
                     min_price: minPrice,
                     max_price: maxPrice,
-                    bse_code_nse_code: "Link",
                     isAllotmentOut: false,
                     drhp_pdf: drhpLink,
                     rhp_pdf: rhpLink,
@@ -214,10 +217,13 @@ export const scrapeAndSaveIPOData = async (limit = 3) => {
                 if (subInfo && subInfo.total > 0) {
                     console.log(`Found subscription data for ${ipo.companyName} from Chittorgarh`);
                     ipo.subscription = {
-                        qib: subInfo.qib || 0,
-                        nii: subInfo.nii || 0,
-                        retail: subInfo.retail || 0,
-                        total: subInfo.total || 0
+                        qib: roundToTwo(subInfo.qib),
+                        nii: roundToTwo(subInfo.nii),
+                        snii: roundToTwo(subInfo.snii),
+                        bnii: roundToTwo(subInfo.bnii),
+                        retail: roundToTwo(subInfo.retail),
+                        employee: roundToTwo(subInfo.employee),
+                        total: roundToTwo(subInfo.total)
                     };
                 } else {
                     // Fallback: Try to scrape from IPOWatch dedicated subscription page
@@ -272,13 +278,17 @@ export const scrapeAndSaveIPOData = async (limit = 3) => {
                 const existingIPO = await Mainboard.findOne({ slug: ipo.slug });
 
                 // Enhanced Logic for Allotment Status
-                // 1. If date passed, set to true
-                if (new Date(ipo.allotment_date).setHours(0, 0, 0, 0) <= new Date().setHours(0, 0, 0, 0)) {
-                    ipo.isAllotmentOut = true;
-                }
-                // 2. If already true in DB, keep it true (don't overwrite with false)
-                if (existingIPO && existingIPO.isAllotmentOut) {
-                    ipo.isAllotmentOut = true;
+                if (ipo.status === 'UPCOMING' || ipo.status === 'OPEN') {
+                    ipo.isAllotmentOut = false;
+                } else {
+                    // 1. If date passed, set to true
+                    if (new Date(ipo.allotment_date).setHours(0, 0, 0, 0) <= new Date().setHours(0, 0, 0, 0)) {
+                        ipo.isAllotmentOut = true;
+                    }
+                    // 2. If already true in DB, keep it true (don't overwrite with false)
+                    if (existingIPO && existingIPO.isAllotmentOut) {
+                        ipo.isAllotmentOut = true;
+                    }
                 }
 
                 if (existingIPO) {
@@ -295,7 +305,9 @@ export const scrapeAndSaveIPOData = async (limit = 3) => {
                     }
 
                     // Update other fields but preserve gmp array
-                    const { gmp, ...otherData } = ipo;
+                    // USER REQUEST: Do not re-scrape/update companyName and registrarName if already stored
+                    const { gmp, companyName, registrarName, registrarLink, icon, ...otherData } = ipo;
+
                     await Mainboard.updateOne(
                         { slug: ipo.slug },
                         { $set: { ...otherData, gmp: existingIPO.gmp } }

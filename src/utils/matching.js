@@ -14,3 +14,19 @@ export const parseCurrency = (str) => {
     const match = str.replace(/,/g, '').match(/[\d.]+/);
     return match ? parseFloat(match[0]) : 0;
 };
+
+// Helper: Parse Issue Size (e.g., "Approx ₹42.60 Crores" -> "42.60")
+export const parseIssueSize = (str) => {
+    if (!str) return "0.00";
+    const match = str.replace(/,/g, '').match(/(\d+(?:\.\d+)?)/);
+    if (match && match[1]) {
+        return parseFloat(match[1]).toFixed(2);
+    }
+    return "0.00";
+};
+
+export const roundToTwo = (num) => {
+    if (typeof num === 'string') num = parseFloat(num);
+    if (isNaN(num)) return 0;
+    return Math.round(num * 100) / 100;
+};

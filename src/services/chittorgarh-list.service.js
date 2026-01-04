@@ -1,7 +1,7 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import slugify from 'slugify';
-import { parseCurrency } from '../utils/matching.js';
+import { parseCurrency, parseIssueSize, roundToTwo } from '../utils/matching.js';
 
 // Helper: Get Date Parts
 const getYear = () => new Date().getFullYear();
@@ -158,12 +158,15 @@ export const scrapeChittorgarhIPOs = async (limit = 5) => {
             ipoType: "MAINBOARD",
             status: finalStatus,
             gmp: [], // EXPLICITLY EMPTY
-            issueSize: item['Total Issue Amount (Incl.Firm reservations) (Rs.cr.)'] ? `${item['Total Issue Amount (Incl.Firm reservations) (Rs.cr.)']} Cr` : "N/A",
+            issueSize: parseIssueSize(item['Total Issue Amount (Incl.Firm reservations) (Rs.cr.)']),
             subscription: {
-                qib: item['QIB (x)'] || 0,
-                nii: item['NII (x)'] || 0,
-                retail: item['Retail (x)'] || 0,
-                total: item['Total (x)'] || 0
+                qib: roundToTwo(item['QIB (x)']),
+                nii: roundToTwo(item['NII (x)']),
+                snii: roundToTwo(item['sNII (x)']),
+                bnii: roundToTwo(item['bNII (x)']),
+                retail: roundToTwo(item['Retail (x)']),
+                employee: roundToTwo(item['Employee (x)']),
+                total: roundToTwo(item['Total (x)'])
             },
             open_date: openDate || new Date(),
             close_date: closeDate || new Date(),

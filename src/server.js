@@ -12,16 +12,18 @@ import scraperRoutes from './routes/scraper.routes.js';
 import cron from 'node-cron';
 import { syncAllGMPData } from './services/gmp-scraper.service.js';
 import { scrapeAndSaveIPOData } from './services/scraper.service.js';
+import allotmentRoutes from './routes/allotment.routes.js';
+import { startCronJobs } from './services/cron.service.js';
+
+// Start Background Jobs
+startCronJobs();
 
 import registrarRoutes from './routes/registrar.routes.js';
-
 const PORT = process.env.PORT || 5000;
 const app = express();
 dbConnect();
 
-// Cron Job: Every 60 minutes
-// Cron Job: Every 15 minutes for GMP
-cron.schedule('*/15 * * * *', async () => {
+cron.schedule('*/60 * * * *', async () => {
     console.log('Running scheduled GMP Sync...');
     try {
         await syncAllGMPData();
@@ -31,8 +33,7 @@ cron.schedule('*/15 * * * *', async () => {
     }
 });
 
-// Cron Job: Every 15 minutes for IPO Sync
-cron.schedule('*/15 * * * *', async () => {
+cron.schedule('*/60 * * * *', async () => {
     console.log('Running scheduled IPO Sync...');
     try {
         await scrapeAndSaveIPOData(10);
@@ -56,6 +57,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/registrars', registrarRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/scraper', scraperRoutes);
+app.use('/api/allotment', allotmentRoutes);
 
 import swaggerUi from 'swagger-ui-express';
 import swaggerSpec from './config/swagger.js';
