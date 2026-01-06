@@ -41,6 +41,7 @@ const mainboardSchema = new mongoose.Schema({
     lot_price: { type: Number, required: true, set: setTwoDecimal },
     min_price: { type: Number, set: setTwoDecimal },
     max_price: { type: Number, set: setTwoDecimal },
+    kfintech_client_id: { type: String },
     isAllotmentOut: { type: Boolean, required: true },
     rhp_pdf: { type: String },
     drhp_pdf: { type: String },

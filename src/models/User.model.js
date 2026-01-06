@@ -60,6 +60,7 @@ const userSchema = new mongoose.Schema(
           required: true,
           match: [/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/, 'Please enter a valid PAN number']
         },
+        dpId: { type: String }, // DP Client ID (Demat Account Number)
         name: { type: String, required: true },
         dob: { type: Date },
         status: { type: String, enum: ["PENDING", "VERIFIED", "REJECTED"], default: "PENDING" },

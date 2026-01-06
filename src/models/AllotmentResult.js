@@ -26,6 +26,9 @@ const allotmentResultSchema = new mongoose.Schema(
             type: String,
             default: "",
         },
+        dpId: {
+            type: String,
+        },
         lastChecked: {
             type: Date,
             default: Date.now,

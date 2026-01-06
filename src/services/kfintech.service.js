@@ -110,24 +110,32 @@ export const fetchKFintechIPOList = async () => {
 
 /**
  * Check allotment status for a specific IPO and PANs using hidden API.
- * @param {string} ipoName - The name of the IPO from our DB.
+ * @param {Object} ipo - The IPO object from DB.
  * @param {string[]} panNumbers - List of PANs to check.
  */
-export const checkKFintechStatus = async (ipoName, panNumbers) => {
+export const checkKFintechStatus = async (ipo, panNumbers) => {
     try {
-        // 1. Get the list of IPOs
-        const ipoList = await fetchKFintechIPOList();
+        let targetIPO = null;
+        let clientId = ipo.kfintech_client_id;
 
-        // 2. Find the IPO in the list
-        // Fuzzy match: check if one contains the other
-        const targetIPO = ipoList.find(ipo => isMatch(ipo.name, ipoName));
+        if (clientId) {
+            console.log(`Using provided Client ID: ${clientId} for "${ipo.companyName}"`);
+            targetIPO = { clientId, name: ipo.companyName };
+        } else {
+            // 1. Get the list of IPOs
+            const ipoList = await fetchKFintechIPOList();
+            // 2. Find the IPO in the list
+            // Fuzzy match: check if one contains the other
+            targetIPO = ipoList.find(item => isMatch(item.name, ipo.companyName));
 
-        if (!targetIPO) {
-            console.warn(`IPO "${ipoName}" not found in KFintech list.`);
-            return {
-                summary: { allotted: 0, notAllotted: 0, error: panNumbers.length },
-                details: panNumbers.map(pan => ({ pan, status: 'UNKNOWN', message: 'IPO not found in KFintech' }))
-            };
+            if (!targetIPO) {
+                console.warn(`IPO "${ipo.companyName}" not found in KFintech list (and no client_id provided).`);
+                return {
+                    summary: { allotted: 0, notAllotted: 0, error: panNumbers.length },
+                    details: panNumbers.map(pan => ({ pan, status: 'UNKNOWN', message: 'IPO not found in KFintech' }))
+                };
+            }
+            console.log(`Found "${targetIPO.name}" in scraper list (Client ID: ${targetIPO.clientId})`);
         }
 
         console.log(`Checking allotment for "${targetIPO.name}" (Client ID: ${targetIPO.clientId})`);
@@ -193,15 +201,26 @@ const parseResponse = (data, pan) => {
 
     const rec = data.data[0];
     const allShares = parseInt(rec.All_Shares || "0");
-    const name = rec.Name || "Unknown";
+    const appShares = parseInt(rec.App_Shares || "0");
+    const dpId = rec.DP_CLID || null;
 
+    // Name Cleaning: Remove MR./MRS./MS. prefix and trailing dots/spaces
+    let name = rec.Name || "Unknown";
+    name = name.replace(/^(MR\.|MRS\.|MS\.|M\/S\.)\s*/i, "") // Remove Prefix
+        .trim()
+        .replace(/\.+$/, "") // Remove trailing dots
+        .trim();
+
+    // Logic: User observed "App_Shares === All_Shares" implies allotment.
+    // We will consider All_Shares > 0 as ALLOTTED.
     if (allShares > 0) {
         return {
             pan,
             status: 'ALLOTTED',
             units: allShares,
             message: `Allotted ${allShares} shares`,
-            name: name
+            name: name,
+            dpId: dpId
         };
     } else {
         return {
@@ -209,7 +228,8 @@ const parseResponse = (data, pan) => {
             status: 'NOT_ALLOTTED',
             units: 0,
             message: 'Not Allotted',
-            name: name
+            name: name,
+            dpId: dpId
         };
     }
 };

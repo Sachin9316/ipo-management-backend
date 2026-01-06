@@ -5,6 +5,8 @@ import { checkKFintechStatus } from '../services/kfintech.service.js';
 
 const CACHE_DURATION_MS = 4 * 60 * 60 * 1000; // 4 hours
 
+import User from "../models/User.model.js";
+
 export const checkAllotment = async (req, res) => {
     try {
         const { ipoName, registrar, panNumbers } = req.body;
@@ -56,7 +58,7 @@ export const checkAllotment = async (req, res) => {
             const reg = registrar ? registrar.toUpperCase() : '';
 
             if (reg.includes('KFIN') || reg.includes('KFINTECH')) {
-                apiResponse = await checkKFintechStatus(ipo.companyName, pansToCheck);
+                apiResponse = await checkKFintechStatus(ipo, pansToCheck);
             } else if (reg.includes('LINK') || reg.includes('MUFG')) {
                 // apiResponse = await checkLinkIntimeStatus(ipo.companyName, pansToCheck);
                 // Fallback for now
@@ -71,17 +73,36 @@ export const checkAllotment = async (req, res) => {
 
             // 4. Update Cache & Merge Results
             for (const item of apiResponse.details) {
-                // Save to DB
+                // Save to AllotmentResult DB
                 await AllotmentResult.findOneAndUpdate(
                     { ipoId: ipo._id, panNumber: item.pan },
                     {
                         status: item.status,
                         units: item.units || 0,
                         message: item.message,
+                        dpId: item.dpId,
                         lastChecked: new Date()
                     },
                     { upsert: true, new: true }
                 );
+
+                // Update User's PAN Document with DP ID if available
+                if (item.dpId) {
+                    try {
+                        await User.findOneAndUpdate(
+                            { "panDocuments.panNumber": item.pan },
+                            {
+                                $set: {
+                                    "panDocuments.$.dpId": item.dpId,
+                                    // Optional: Update name if cleaner
+                                    // "panDocuments.$.name": item.name 
+                                }
+                            }
+                        );
+                    } catch (userErr) {
+                        console.error(`Failed to update User DP ID for PAN ${item.pan}`, userErr);
+                    }
+                }
 
                 results.push(item);
             }
