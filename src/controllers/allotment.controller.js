@@ -1,127 +1,129 @@
-import Mainboard from '../models/mainboard.model.js';
-import AllotmentResult from '../models/AllotmentResult.js';
-import { checkKFintechStatus } from '../services/kfintech.service.js';
-// import { checkLinkIntimeStatus } from '../services/linkintime.service.js'; // Future
-
-const CACHE_DURATION_MS = 4 * 60 * 60 * 1000; // 4 hours
-
+import Mainboard from "../models/mainboard.model.js";
+import AllotmentResult from "../models/AllotmentResult.js";
 import User from "../models/User.model.js";
+import { checkKFintechStatus } from "../services/kfintech.service.js";
+import { checkMUFGStatus } from '../services/mufg.service.js';
+
+const TTL = {
+    ALLOTTED: 24 * 60 * 60 * 1000,
+    NOT_ALLOTTED: 24 * 60 * 60 * 1000,
+    UNKNOWN: 45 * 60 * 1000,
+    ERROR: 15 * 60 * 1000
+};
 
 export const checkAllotment = async (req, res) => {
     try {
+        debugger;
         const { ipoName, registrar, panNumbers } = req.body;
 
-        if (!ipoName || !panNumbers || !Array.isArray(panNumbers)) {
-            return res.status(400).json({ success: false, message: 'Invalid payload' });
+        if (!ipoName || !Array.isArray(panNumbers)) {
+            return res.status(400).json({ success: false, message: "Invalid payload" });
         }
 
-        // 1. Find the IPO to link results
-        // We need the IPO ID for the foreign key in AllotmentResult
         const ipo = await Mainboard.findOne({
-            $or: [
-                { companyName: ipoName },
-                { slug: ipoName } // In case slug is passed
-            ]
+            $or: [{ companyName: ipoName }, { slug: ipoName }]
         });
 
         if (!ipo) {
-            return res.status(404).json({ success: false, message: 'IPO not found in database' });
+            return res.status(404).json({ success: false, message: "IPO not found" });
         }
 
-        // 2. Check Cache
+        const now = Date.now();
+
+        // 🔹 Batch cache fetch
+        const cached = await AllotmentResult.find({
+            ipoId: ipo._id,
+            panNumber: { $in: panNumbers }
+        });
+
+        const cacheMap = new Map(
+            cached.map(r => [r.panNumber, r])
+        );
+
         const results = [];
         const pansToCheck = [];
-        const now = new Date();
 
         for (const pan of panNumbers) {
-            const existing = await AllotmentResult.findOne({ ipoId: ipo._id, panNumber: pan });
-
-            // valid if exists AND (status is ALLOTTED/NOT_ALLOTTED OR (UNKNOWN/ERROR and checked significantly recently?))
-            // Actually, if it's UNKNOWN or ERROR, we might want to retry sooner?
-            // For now, strict TTL for all
-
-            if (existing && (now - new Date(existing.lastChecked) < CACHE_DURATION_MS)) {
+            const record = cacheMap.get(pan);
+            if (
+                record &&
+                now - new Date(record.lastChecked).getTime() <
+                (TTL[record.status] || TTL.UNKNOWN) &&
+                !record.message?.includes("Registrar not supported") &&
+                !record.message?.includes("IPO not found")
+            ) {
                 results.push({
-                    pan: existing.panNumber,
-                    status: existing.status,
-                    units: existing.units,
-                    message: existing.message || (existing.status === 'ALLOTTED' ? `Allotted ${existing.units} shares` : 'Not Allotted')
+                    pan,
+                    status: record.status,
+                    units: record.units,
+                    message: record.message
                 });
             } else {
                 pansToCheck.push(pan);
             }
         }
 
-        // 3. Fetch from Registrar if needed
-        if (pansToCheck.length > 0) {
-            let apiResponse = { details: [] };
-            const reg = registrar ? registrar.toUpperCase() : '';
+        // 🔹 Registrar fetch
+        if (pansToCheck.length) {
+            let apiResponse;
 
-            if (reg.includes('KFIN') || reg.includes('KFINTECH')) {
+            if (registrar?.toUpperCase().includes("KFIN")) {
                 apiResponse = await checkKFintechStatus(ipo, pansToCheck);
-            } else if (reg.includes('LINK') || reg.includes('MUFG')) {
-                // apiResponse = await checkLinkIntimeStatus(ipo.companyName, pansToCheck);
-                // Fallback for now
-                apiResponse = {
-                    details: pansToCheck.map(p => ({ pan: p, status: 'UNKNOWN', message: 'LinkIntime automation coming soon' }))
-                };
+            } else if (registrar?.toUpperCase().includes("MUFG") || registrar?.toUpperCase().includes("LINK") || registrar?.toUpperCase().includes("INTIME")) {
+                // MUFG/Link Intime
+                apiResponse = await checkMUFGStatus(ipo.companyName, pansToCheck);
+            } else if (registrar?.toUpperCase().includes("BIGSHARE")) {
+                // Bigshare
+                const { checkBigshareStatus } = await import('../services/bigshare.service.js');
+                apiResponse = await checkBigshareStatus(ipo.companyName, pansToCheck);
             } else {
                 apiResponse = {
-                    details: pansToCheck.map(p => ({ pan: p, status: 'UNKNOWN', message: 'Registrar automation not supported' }))
+                    details: pansToCheck.map(p => ({
+                        pan: p,
+                        status: "UNKNOWN",
+                        message: "Registrar not supported"
+                    }))
                 };
             }
 
-            // 4. Update Cache & Merge Results
             for (const item of apiResponse.details) {
-                // Save to AllotmentResult DB
                 await AllotmentResult.findOneAndUpdate(
                     { ipoId: ipo._id, panNumber: item.pan },
                     {
                         status: item.status,
                         units: item.units || 0,
                         message: item.message,
-                        dpId: item.dpId,
                         lastChecked: new Date()
                     },
-                    { upsert: true, new: true }
+                    { upsert: true }
                 );
 
-                // Update User's PAN Document with DP ID if available
+                // optional user DP update
                 if (item.dpId) {
-                    try {
-                        await User.findOneAndUpdate(
-                            { "panDocuments.panNumber": item.pan },
-                            {
-                                $set: {
-                                    "panDocuments.$.dpId": item.dpId,
-                                    // Optional: Update name if cleaner
-                                    // "panDocuments.$.name": item.name 
-                                }
-                            }
-                        );
-                    } catch (userErr) {
-                        console.error(`Failed to update User DP ID for PAN ${item.pan}`, userErr);
-                    }
+                    await User.updateOne(
+                        { "panDocuments.panNumber": item.pan },
+                        { $set: { "panDocuments.$.dpId": item.dpId } }
+                    );
                 }
 
                 results.push(item);
             }
         }
 
-        // Return standardized response
         res.json({
             success: true,
             summary: {
-                allotted: results.filter(r => r.status === 'ALLOTTED').length,
-                notAllotted: results.filter(r => r.status === 'NOT_ALLOTTED').length,
-                unknown: results.filter(r => r.status === 'UNKNOWN' || r.status === 'NOT_APPLIED').length,
-                error: results.filter(r => r.status === 'ERROR').length
+                allotted: results.filter(r => r.status === "ALLOTTED").length,
+                notAllotted: results.filter(r => r.status === "NOT_ALLOTTED").length,
+                notApplied: results.filter(r => r.status === "NOT_APPLIED").length,
+                unknown: results.filter(r => r.status === "UNKNOWN").length,
+                error: results.filter(r => r.status === "ERROR").length
             },
             data: results
         });
 
-    } catch (error) {
-        console.error('Check Allotment Error:', error);
-        res.status(500).json({ success: false, message: error.message });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, message: err.message });
     }
 };

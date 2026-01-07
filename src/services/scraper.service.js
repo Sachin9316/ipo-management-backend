@@ -2,7 +2,7 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 import slugify from 'slugify';
 import Mainboard from '../models/mainboard.model.js';
-import { isMatch, parseCurrency, parseIssueSize, roundToTwo } from '../utils/matching.js';
+import { isMatch, parseCurrency, parseIssueSize, roundToTwo, getSimilarity } from '../utils/matching.js';
 // ... (imports remain the same, just updating line 5)
 
 // ...
@@ -275,7 +275,29 @@ export const scrapeAndSaveIPOData = async (limit = 3) => {
                 }
 
                 // Upsert: Update if exists, Insert if new
-                const existingIPO = await Mainboard.findOne({ slug: ipo.slug });
+                let existingIPO = await Mainboard.findOne({ slug: ipo.slug });
+
+                // FUZZY MATCH CHECK: If not found by exact slug, check for similar names to prevent duplicates
+                if (!existingIPO) {
+                    const allIPOs = await Mainboard.find({}, 'companyName slug').lean();
+                    let bestMatch = null;
+                    let highestScore = 0;
+
+                    for (const existing of allIPOs) {
+                        const score = getSimilarity(existing.companyName, ipo.companyName);
+                        if (score > highestScore) {
+                            highestScore = score;
+                            bestMatch = existing;
+                        }
+                    }
+
+                    if (bestMatch && highestScore > 0.3) {
+                        console.log(`Fuzzy duplicate found! "${ipo.companyName}" matches "${bestMatch.companyName}" (Score: ${highestScore.toFixed(2)})`);
+                        // Use the EXISTING slug so we update the old record instead of creating a new one
+                        ipo.slug = bestMatch.slug;
+                        existingIPO = await Mainboard.findOne({ slug: ipo.slug });
+                    }
+                }
 
                 // Enhanced Logic for Allotment Status
                 if (ipo.status === 'UPCOMING' || ipo.status === 'OPEN') {

@@ -81,7 +81,11 @@ export const getAllMainboards = async (req, res) => {
 
         console.log("Incoming Query:", req.query);
         if (req.query.status) {
-            filter.status = req.query.status.toUpperCase();
+            if (req.query.status.includes(',')) {
+                filter.status = { $in: req.query.status.split(',').map(s => s.trim().toUpperCase()) };
+            } else {
+                filter.status = req.query.status.toUpperCase();
+            }
         }
 
         if (req.query.ipoType && req.query.ipoType.toUpperCase() !== 'ALL') {

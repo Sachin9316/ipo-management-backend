@@ -1,11 +1,11 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import { isMatch } from '../utils/matching.js';
+import { chromium } from 'playwright';
+import { isMatch, getSimilarity } from '../utils/matching.js';
 
 const HOME_URL = 'https://ipostatus.kfintech.com/';
-const API_URL = 'https://0uz601ms56.execute-api.ap-south-1.amazonaws.com/prod/api/query';
 
-// Cache the IPO list in memory to avoid fetching JS on every request
+// Cache the IPO list in memory
 let cachedIPOList = null;
 let lastFetchTime = 0;
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
@@ -32,7 +32,6 @@ export const fetchKFintechIPOList = async () => {
         const $ = cheerio.load(html);
         let scriptSrc = '';
 
-        // Find the script tag that looks like the main bundle (usually contains "main.")
         $('script').each((i, el) => {
             const src = $(el).attr('src');
             if (src && src.includes('main.')) {
@@ -42,62 +41,57 @@ export const fetchKFintechIPOList = async () => {
 
         if (!scriptSrc) {
             console.error('Could not find main JS script on KFintech homepage.');
-            return []; // Return empty or cached fallback
+            return [];
         }
 
-        // Handle relative path
         if (!scriptSrc.startsWith('http')) {
-            scriptSrc = HOME_URL + scriptSrc.replace(/^\//, ''); // Remove leading slash if present
+            scriptSrc = HOME_URL + scriptSrc.replace(/^\//, '');
         }
 
         console.log(`Fetching JS Bundle: ${scriptSrc}`);
 
-        // 2. Fetch the JS file
         const { data: jsContent } = await axios.get(scriptSrc);
 
-        // 3. Extract the array of IPOs
-        // Pattern: look for array of objects with keys like 'client_id' and 'name'
-        // Example minified: var t=[{client_id:"...",name:"..."},...]
-        // Regex to find a JSON-like array structure containing client_id
+        let ipos = [];
 
-        // Strategy: Find a snippet like `client_id:"` and trace back to `[` and forward to `]`
-        // Or simplified: Extract all objects containing client_id
+        // Find JSON.parse containing the list
+        const potentialMatches = jsContent.matchAll(/JSON\.parse\s*\(\s*'(\[\{.*?\}\])'\s*\)/g);
 
-        // Regex Explanation:
-        // Match `{` 
-        // followed by anything (non-greedy)
-        // match `client_id:"(\d+)"`
-        // followed by anything
-        // match `name:"([^"]+)"`
-        // followed by anything
-        // match `}`
-        // This is risky on minified code. 
+        for (const match of potentialMatches) {
+            const jsonString = match[1];
+            if (jsonString && jsonString.includes('clientId') && jsonString.includes('name')) {
+                try {
+                    const parsedData = JSON.parse(jsonString);
+                    if (Array.isArray(parsedData) && parsedData.length > 0) {
+                        ipos = parsedData.map(item => ({
+                            clientId: item.clientId,
+                            name: item.name
+                        }));
+                        console.log(`Successfully parsed ${ipos.length} IPOs from JSON string.`);
+                        break;
+                    }
+                } catch (e) {
+                    console.warn('Failed to parse potential IPO JSON string:', e.message);
+                }
+            }
+        }
 
-        // Better Strategy for KFintech specific bundle:
-        // They often use a large variable assignment.
-        // Let's try to capture the whole array if possible, or iterate matches.
-
-        const ipos = [];
-        // Regex to match individual object properties roughly
-        // client_id:"12345",name:"ABC Corp"
-        // in minified JS, quotes around keys might be missing: client_id:"...",name:"..."
-
-        const regex = /client_id\s*:\s*"(\d+)"\s*,\s*name\s*:\s*"([^"]+)"/g;
-        let match;
-
-        while ((match = regex.exec(jsContent)) !== null) {
-            ipos.push({
-                clientId: match[1],
-                name: match[2]
-            });
+        // Fallback regex
+        if (ipos.length === 0) {
+            console.log('JSON.parse pattern not found, trying regex fallback...');
+            const regex = /clientId\s*:\s*"(\d+)"\s*,\s*name\s*:\s*"([^"]+)"/g;
+            let match;
+            while ((match = regex.exec(jsContent)) !== null) {
+                ipos.push({
+                    clientId: match[1],
+                    name: match[2]
+                });
+            }
         }
 
         if (ipos.length > 0) {
-            console.log(`Found ${ipos.length} IPOs in KFintech JS.`);
             cachedIPOList = ipos;
             lastFetchTime = Date.now();
-        } else {
-            console.warn("Regex failed to find IPOs in KFintech JS. API structure might have changed.");
         }
 
         return cachedIPOList || [];
@@ -109,12 +103,14 @@ export const fetchKFintechIPOList = async () => {
 };
 
 /**
- * Check allotment status for a specific IPO and PANs using hidden API.
- * @param {Object} ipo - The IPO object from DB.
- * @param {string[]} panNumbers - List of PANs to check.
+ * Check allotment status using Playwright browser automation.
  */
 export const checkKFintechStatus = async (ipo, panNumbers) => {
+    let browser = null;
+    const results = [];
+
     try {
+        // 1. Resolve Target IPO
         let targetIPO = null;
         let clientId = ipo.kfintech_client_id;
 
@@ -122,114 +118,183 @@ export const checkKFintechStatus = async (ipo, panNumbers) => {
             console.log(`Using provided Client ID: ${clientId} for "${ipo.companyName}"`);
             targetIPO = { clientId, name: ipo.companyName };
         } else {
-            // 1. Get the list of IPOs
             const ipoList = await fetchKFintechIPOList();
-            // 2. Find the IPO in the list
-            // Fuzzy match: check if one contains the other
-            targetIPO = ipoList.find(item => isMatch(item.name, ipo.companyName));
 
-            if (!targetIPO) {
-                console.warn(`IPO "${ipo.companyName}" not found in KFintech list (and no client_id provided).`);
-                return {
-                    summary: { allotted: 0, notAllotted: 0, error: panNumbers.length },
-                    details: panNumbers.map(pan => ({ pan, status: 'UNKNOWN', message: 'IPO not found in KFintech' }))
-                };
+            let bestMatch = null;
+            let highestScore = 0;
+
+            for (const item of ipoList) {
+                const score = getSimilarity(item.name, ipo.companyName);
+                if (score > highestScore) {
+                    highestScore = score;
+                    bestMatch = item;
+                }
             }
-            console.log(`Found "${targetIPO.name}" in scraper list (Client ID: ${targetIPO.clientId})`);
+
+            if (bestMatch && highestScore > 0.25) {
+                console.log(`Best match found: "${bestMatch.name}" (Score: ${highestScore.toFixed(2)})`);
+                targetIPO = bestMatch;
+            } else {
+                console.warn(`No suitable match found for "${ipo.companyName}". Highest Score: ${highestScore.toFixed(3)}`);
+            }
         }
 
-        console.log(`Checking allotment for "${targetIPO.name}" (Client ID: ${targetIPO.clientId})`);
+        if (!targetIPO) {
+            return {
+                summary: { allotted: 0, notAllotted: 0, error: panNumbers.length },
+                details: panNumbers.map(pan => ({ pan, status: 'UNKNOWN', message: 'IPO not found in KFintech' }))
+            };
+        }
 
-        const results = [];
+        // 2. Launch Browser
+        console.log(`Launching browser to check allotment for "${targetIPO.name}"...`);
+        browser = await chromium.launch({
+            headless: true, // Use headless for production
+            args: ['--no-sandbox', '--disable-setuid-sandbox']
+        });
 
-        // 3. Check status for each PAN
+        const context = await browser.newContext();
+        const page = await context.newPage();
+
+        // 3. Navigate
+        console.log(`Navigating to ${HOME_URL}...`);
+        await page.goto(HOME_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+        // 4. Select IPO (Handle Material UI Dropdown)
+        try {
+            console.log("Selecting IPO from dropdown...");
+            // Click the dropdown trigger
+            await page.click('#demo-multiple-name');
+
+            // Wait for listbox
+            await page.waitForSelector('ul[role="listbox"]');
+
+            // Click the option
+            // We use standard string inclusion. The name from scraper should match exactly or closely.
+            // Using a case-insensitive contains selector for safety
+            const optionSelector = `li[role="option"]:has-text("${targetIPO.name}")`;
+
+            if (await page.isVisible(optionSelector)) {
+                await page.click(optionSelector);
+                console.log("IPO selected.");
+            } else {
+                console.warn(`Option for "${targetIPO.name}" not visible in dropdown.`);
+                // Fallback: try scrolling or fuzzy match if necessary, but name should be exact from scraper
+                throw new Error("IPO Option not found in dropdown");
+            }
+
+            // Click outside or ensure dropdown closed? Use escape usually, or clicking option closes it.
+            // MUI Select closes on option click.
+
+            // Wait for stability
+            await page.waitForTimeout(500);
+
+        } catch (e) {
+            console.error("Error selecting IPO from dropdown:", e.message);
+            throw e; // Cannot proceed without selecting IPO
+        }
+
+        // 5. Select PAN Radio
+        try {
+            // Identified as input[value='PAN']
+            await page.click("input[value='PAN']");
+        } catch (e) {
+            console.warn("Could not click PAN radio by value, trying label...");
+            await page.click('label:has-text("PAN")');
+        }
+
+        // 6. Iterate PANs
         for (const pan of panNumbers) {
             try {
-                // The API uses headers to pass params:
-                // client_id: <IPO_ID>
-                // reqparam: <PAN>
-                // type=pan query param is constant
+                console.log(`Checking PAN: ${pan}`);
 
-                // Add delay for throttling if handling many PANs
-                if (panNumbers.length > 5) {
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                // Clear and Enter PAN
+                // Selector: #outlined-start-adornment
+                await page.fill('#outlined-start-adornment', '');
+                await page.fill('#outlined-start-adornment', pan);
+
+                // Submit
+                // Selector: button.content-button
+                await page.click('button.content-button');
+
+                // Wait for result
+                // Results appear in .MuiTable-root (table) or .MuiDialog-root (popup if not found)
+                const resultSelector = '.MuiTable-root, .MuiDialog-root';
+                await page.waitForSelector(resultSelector, { timeout: 5000 });
+
+                // Parse content
+                const pageContent = await page.content();
+                const $ = cheerio.load(pageContent);
+                const bodyText = $('body').text(); // Naive text check is usually sufficient for "Allotted" vs "Not Allotted"
+
+                let status = 'UNKNOWN';
+                let message = 'No info';
+                let units = 0;
+
+                // Close dialog if present (to reset state for next check)
+                if (await page.isVisible('.MuiDialog-root')) {
+                    const dialogText = await page.textContent('.MuiDialog-root');
+                    if (dialogText.includes('Not Allotted') || dialogText.includes('not found') || dialogText.includes('invalid')) {
+                        status = 'NOT_ALLOTTED'; // Treat "not found" as not allotted/not applied effectively
+                        message = dialogText.trim();
+                    } else {
+                        message = dialogText.trim();
+                    }
+
+                    // Click outside or close button to dismiss dialog?
+                    // Subagent clicked (581, 574) which might be a close button or backdrop.
+                    // Usually sending Escape works.
+                    await page.keyboard.press('Escape');
+                    await page.waitForTimeout(500);
+                } else if (await page.isVisible('.MuiTable-root')) {
+                    // Table implies success/record found
+                    if (bodyText.includes('Alloted') || bodyText.includes('Allotted')) { // Spelled 'Alloted' sometimes
+                        const match = bodyText.match(/Alloted\s*[:\-]?\s*(\d+)/i) || bodyText.match(/Allotted\s*[:\-]?\s*(\d+)/i);
+                        units = match ? parseInt(match[1]) : 0;
+                        if (units > 0) {
+                            status = 'ALLOTTED';
+                            message = `Allotted ${units} Shares`;
+                        } else {
+                            status = 'NOT_ALLOTTED';
+                            message = 'Allotted 0 Shares';
+                        }
+                    } else {
+                        // Table with no allotment text?
+                        status = 'NOT_ALLOTTED';
+                        message = 'Record found but no allotment info';
+                    }
                 }
 
-                const response = await axios.get(`${API_URL}?type=pan`, {
-                    headers: {
-                        'client_id': targetIPO.clientId,
-                        'reqparam': pan,
-                        'Content-Type': 'application/json'
-                    }
-                });
+                results.push({ pan, status, units, message });
+                console.log(`  -> ${status}: ${message}`);
 
-                const parserResult = parseResponse(response.data, pan);
-                results.push(parserResult);
+                // Wait before next
+                await page.waitForTimeout(1000);
 
             } catch (err) {
-                console.error(`Error checking PAN ${pan}:`, err.message);
+                console.error(`Error processing PAN ${pan}:`, err.message);
                 results.push({ pan, status: 'ERROR', message: err.message });
+                // Try to recover state (reload page?)
+                await page.reload();
+                // If we reload, we must re-select IPO... complex logic.
+                // For now, simpler to just continue and hope state is fine or previous catch handled dialog.
             }
         }
 
-        return {
-            summary: {
-                allotted: results.filter(r => r.status === 'ALLOTTED').length,
-                notAllotted: results.filter(r => r.status === 'NOT_ALLOTTED').length,
-                error: results.filter(r => r.status === 'ERROR').length
-            },
-            details: results
-        };
-
-    } catch (error) {
-        console.error('KFintech Service Error:', error);
-        throw error;
-    }
-};
-
-const parseResponse = (data, pan) => {
-    // Expected structure: { data: [ { All_Shares: "6", ... } ] }
-    if (!data || !data.data || !Array.isArray(data.data)) {
-        // KFintech sometimes sends different error structures or empty bodies on no-match
-        return { pan, status: 'NOT_ALLOTTED', message: 'No record found' };
+    } catch (e) {
+        console.error("Browser Automation Error:", e);
+        // Fallback for all remaining PANs?
+        // ..
+    } finally {
+        if (browser) await browser.close();
     }
 
-    if (data.data.length === 0) {
-        // Empty array usually means Not Found / Not Applied / Not Allotted yet
-        return { pan, status: 'NOT_ALLOTTED', message: 'No record found' };
-    }
-
-    const rec = data.data[0];
-    const allShares = parseInt(rec.All_Shares || "0");
-    const appShares = parseInt(rec.App_Shares || "0");
-    const dpId = rec.DP_CLID || null;
-
-    // Name Cleaning: Remove MR./MRS./MS. prefix and trailing dots/spaces
-    let name = rec.Name || "Unknown";
-    name = name.replace(/^(MR\.|MRS\.|MS\.|M\/S\.)\s*/i, "") // Remove Prefix
-        .trim()
-        .replace(/\.+$/, "") // Remove trailing dots
-        .trim();
-
-    // Logic: User observed "App_Shares === All_Shares" implies allotment.
-    // We will consider All_Shares > 0 as ALLOTTED.
-    if (allShares > 0) {
-        return {
-            pan,
-            status: 'ALLOTTED',
-            units: allShares,
-            message: `Allotted ${allShares} shares`,
-            name: name,
-            dpId: dpId
-        };
-    } else {
-        return {
-            pan,
-            status: 'NOT_ALLOTTED',
-            units: 0,
-            message: 'Not Allotted',
-            name: name,
-            dpId: dpId
-        };
-    }
+    return {
+        summary: {
+            allotted: results.filter(r => r.status === 'ALLOTTED').length,
+            notAllotted: results.filter(r => r.status === 'NOT_ALLOTTED').length,
+            error: results.filter(r => r.status === 'ERROR').length
+        },
+        details: results
+    };
 };

@@ -1,10 +1,35 @@
 // Helper for fuzzy matching names
 export const isMatch = (name1, name2) => {
     if (!name1 || !name2) return false;
-    const clean = n => n.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const n1 = clean(name1);
-    const n2 = clean(name2);
-    return n1.includes(n2) || n2.includes(n1);
+    // Use the new similarity check for "isMatch" as well, with a low threshold
+    return getSimilarity(name1, name2) > 0.3;
+};
+
+/**
+ * Tokenize string: lowercase, remove special chars, remove stopwords
+ */
+const getTokens = (str) => {
+    if (!str) return [];
+    return str.toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '') // remove special chars
+        .split(/\s+/)
+        .filter(t => t.length > 0 && !["limited", "ltd", "private", "pvt", "india", "company"].includes(t));
+};
+
+/**
+ * Calculate Jaccard Similarity between two strings.
+ * Returns score between 0 and 1.
+ */
+export const getSimilarity = (name1, name2) => {
+    const tokens1 = new Set(getTokens(name1));
+    const tokens2 = new Set(getTokens(name2));
+
+    if (tokens1.size === 0 || tokens2.size === 0) return 0;
+
+    const intersection = new Set([...tokens1].filter(x => tokens2.has(x)));
+    const union = new Set([...tokens1, ...tokens2]);
+
+    return intersection.size / union.size;
 };
 
 // Helper: Clean currency strings (e.g., "₹ 12,000" -> 12000)

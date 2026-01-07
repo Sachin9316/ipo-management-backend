@@ -75,7 +75,11 @@ export const getAllSMEIPOs = async (req, res) => {
         const filter = { ipoType: 'SME' };
 
         if (req.query.status) {
-            filter.status = req.query.status.toUpperCase();
+            if (req.query.status.includes(',')) {
+                filter.status = { $in: req.query.status.split(',').map(s => s.trim().toUpperCase()) };
+            } else {
+                filter.status = req.query.status.toUpperCase();
+            }
         }
 
         if (req.query.search) {
