@@ -54,7 +54,7 @@ export const scrapeIPOData = async (limit = 3) => {
             const gmpStr = row.find('td:nth-child(2)').text().trim(); // "₹5" or "₹-"
             const priceStr = row.find('td:nth-child(3)').text().trim(); // "₹239" or "₹227 to ₹239"
             // const dateStr = row.find('td:nth-child(5)').text().trim(); // "23-26 Dec"
-            const typeStr = row.find('td:nth-child(6)').text().trim(); // "SME" or "Mainboard"
+            const typeStr = row.find('td:nth-child(7)').text().trim(); // "SME" or "Mainboard"
 
             if (!name || !link) continue;
 
@@ -131,11 +131,16 @@ export const scrapeIPOData = async (limit = 3) => {
 
                 const finalStatus = calculateStatus(openDate, closeDate, listingDate);
 
+                // Robust SME Detection: If Lot Price > 50,000, it's an SME (Mainboard is ~15k)
+                const calculatedLotPrice = (lotShares || 0) * maxPrice;
+                const isSMEHeuristic = calculatedLotPrice > 50000;
+                const finalIpoType = (typeStr.toUpperCase().includes("SME") || isSMEHeuristic) ? "SME" : "MAINBOARD";
+
                 const ipoData = {
                     companyName: name,
                     slug: slugify(name, { lower: true, strict: true }),
                     icon: "https://cdn-icons-png.flaticon.com/512/25/25231.png", // Placeholder
-                    ipoType: typeStr.toUpperCase().includes("SME") ? "SME" : "MAINBOARD",
+                    ipoType: finalIpoType,
                     status: finalStatus,
                     gmp: [{
                         price: gmpVal,
@@ -158,7 +163,7 @@ export const scrapeIPOData = async (limit = 3) => {
                     registrarName: registrarName,
                     registrarLink: getTableLink('Registrar'),
                     lot_size: lotShares || 0,
-                    lot_price: (lotShares || 0) * maxPrice,
+                    lot_price: calculatedLotPrice,
                     min_price: minPrice,
                     max_price: maxPrice,
                     isAllotmentOut: false,
