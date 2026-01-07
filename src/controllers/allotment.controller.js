@@ -14,7 +14,7 @@ const TTL = {
 export const checkAllotment = async (req, res) => {
     try {
         debugger;
-        const { ipoName, registrar, panNumbers } = req.body;
+        const { ipoName, registrar, panNumbers, forceRefresh } = req.body;
 
         if (!ipoName || !Array.isArray(panNumbers)) {
             return res.status(400).json({ success: false, message: "Invalid payload" });
@@ -31,10 +31,13 @@ export const checkAllotment = async (req, res) => {
         const now = Date.now();
 
         // 🔹 Batch cache fetch
-        const cached = await AllotmentResult.find({
-            ipoId: ipo._id,
-            panNumber: { $in: panNumbers }
-        });
+        let cached = [];
+        if (!forceRefresh) {
+            cached = await AllotmentResult.find({
+                ipoId: ipo._id,
+                panNumber: { $in: panNumbers }
+            });
+        }
 
         const cacheMap = new Map(
             cached.map(r => [r.panNumber, r])
