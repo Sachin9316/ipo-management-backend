@@ -197,6 +197,34 @@ export const deleteMyPan = async (req, res) => {
         res.status(500).json({ message: "Server Error" });
     }
 };
+
+// @desc    Update a PAN document (User facing) - Only Name
+// @route   PATCH /api/users/profile/pan/:panNumber
+// @access  Private
+export const updateMyPan = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id);
+
+        if (user) {
+            const panIndex = user.panDocuments.findIndex(p => p.panNumber === req.params.panNumber);
+
+            if (panIndex > -1) {
+                // Only allow updating name
+                user.panDocuments[panIndex].name = req.body.name || user.panDocuments[panIndex].name;
+
+                await user.save();
+                res.json(user.panDocuments);
+            } else {
+                res.status(404).json({ message: "PAN not found" });
+            }
+        } else {
+            res.status(404).json({ message: "User not found" });
+        }
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
 // @desc    Get Populated Watchlist
 // @route   GET /api/users/profile/watchlist
 // @access  Private

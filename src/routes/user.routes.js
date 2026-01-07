@@ -1,7 +1,7 @@
 import express from "express";
 import {
     getUsers, getCustomers, getUserById, updateUserPan, addMyPan,
-    deleteMyPan,
+    deleteMyPan, updateMyPan,
     getUserProfile,
     updateUser,
     deleteUser,
@@ -69,6 +69,7 @@ router.route("/profile/pan")
  *         description: PAN deleted
  */
 router.route("/profile/pan/:panNumber")
+    .patch(protect, updateMyPan)
     .delete(protect, deleteMyPan);
 
 /**
