@@ -150,7 +150,7 @@ export const checkMUFGStatus = async (ipoName, panNumbers) => {
                     const allottedMatch = text.match(/Securities Allotted\s*[:\-]?\s*(\d+)/i);
                     if (allottedMatch) {
                         units = allottedMatch[1];
-                        if (parseInt(units) === 0) status = 'NOT_APPLIED';
+                        if (parseInt(units) === 0) status = 'NOT_ALLOTTED';
                     }
 
                     results.details.push({ pan: cleanPan, status, units, message: 'Check Successful' });
