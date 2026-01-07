@@ -234,8 +234,11 @@ export const checkKFintechStatus = async (ipo, panNumbers) => {
                 // Close dialog if present (to reset state for next check)
                 if (await page.isVisible('.MuiDialog-root')) {
                     const dialogText = await page.textContent('.MuiDialog-root');
-                    if (dialogText.includes('Not Allotted') || dialogText.includes('not found') || dialogText.includes('invalid')) {
-                        status = 'NOT_ALLOTTED'; // Treat "not found" as not allotted/not applied effectively
+                    if (dialogText.includes('not found') || dialogText.includes('invalid')) {
+                        status = 'NOT_APPLIED';
+                        message = dialogText.trim();
+                    } else if (dialogText.includes('Not Allotted')) {
+                        status = 'NOT_ALLOTTED';
                         message = dialogText.trim();
                     } else {
                         message = dialogText.trim();
