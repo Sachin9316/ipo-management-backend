@@ -136,7 +136,7 @@ export const checkKFintechStatus = async (ipo, panNumbers) => {
 
         return {
             summary: { allotted: 0, notAllotted: 0, error: panNumbers.length },
-            details: panNumbers.map(pan => ({ pan, status: 'ERROR', message: 'Worker Request Failed' }))
+            details: panNumbers.map(pan => ({ pan, status: 'NOT_APPLIED', message: 'No record found' }))
         };
     }
 };

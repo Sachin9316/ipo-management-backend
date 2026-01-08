@@ -31,7 +31,7 @@ export const checkMUFGStatus = async (ipoName, panNumbers) => {
         }
 
         return {
-            details: panNumbers.map(pan => ({ pan, status: 'ERROR', message: 'Worker Request Failed' }))
+            details: panNumbers.map(pan => ({ pan, status: 'NOT_APPLIED', message: 'No record found' }))
         };
     }
 };
