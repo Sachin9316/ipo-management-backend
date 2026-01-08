@@ -1,9 +1,10 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import { chromium } from 'playwright';
+// import { chromium } from 'playwright'; // REMOVED
 import { isMatch, getSimilarity } from '../utils/matching.js';
 
 const HOME_URL = 'https://ipostatus.kfintech.com/';
+const WORKER_URL = process.env.WORKER_URL || 'http://localhost:3000';
 
 // Cache the IPO list in memory
 let cachedIPOList = null;
@@ -12,14 +13,25 @@ const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
 /**
  * Fetch the main JS file from KFintech and parse the hardcoded IPO list.
+ * Kept here for compatibility, but logic is also in Worker.
  */
 export const fetchKFintechIPOList = async () => {
+    // ... (Keep existing implementation for now as it uses axios/cheerio which works on Vercel) ...
+    // ... Actually, to ensure consistency, we could proxy this to the worker too, but
+    // since it's just axios+cheerio and lightweight, we can leave it or proxy it.
+    // Leaving it prevents extra RTT if Vercel can do it easily.
+    // But Vercel IP might be blocked? If so, worker is better.
+    // Let's try to proxy to worker if possible, or fallback to local?
+    // For now, leave as is, focusing on Playwright part.
+
+    // ... (rest of fetchKFintechIPOList implementation) ...
     try {
         const now = Date.now();
         if (cachedIPOList && (now - lastFetchTime < CACHE_TTL)) {
             return cachedIPOList;
         }
 
+        // ... (original logic) ...
         console.log('Fetching KFintech IPO List from source...');
 
         // 1. Get the Homepage to find the main JS file
@@ -103,201 +115,28 @@ export const fetchKFintechIPOList = async () => {
 };
 
 /**
- * Check allotment status using Playwright browser automation.
+ * Check allotment status using Playwright browser automation VIA WORKER.
  */
 export const checkKFintechStatus = async (ipo, panNumbers) => {
-    let browser = null;
-    const results = [];
-
     try {
-        // 1. Resolve Target IPO
-        let targetIPO = null;
-        let clientId = ipo.kfintech_client_id;
+        console.log(`Delegating KFintech check for "${ipo.companyName}" to WORKER at ${WORKER_URL}`);
 
-        if (clientId) {
-            console.log(`Using provided Client ID: ${clientId} for "${ipo.companyName}"`);
-            targetIPO = { clientId, name: ipo.companyName };
-        } else {
-            const ipoList = await fetchKFintechIPOList();
-
-            let bestMatch = null;
-            let highestScore = 0;
-
-            for (const item of ipoList) {
-                const score = getSimilarity(item.name, ipo.companyName);
-                if (score > highestScore) {
-                    highestScore = score;
-                    bestMatch = item;
-                }
-            }
-
-            if (bestMatch && highestScore > 0.25) {
-                console.log(`Best match found: "${bestMatch.name}" (Score: ${highestScore.toFixed(2)})`);
-                targetIPO = bestMatch;
-            } else {
-                console.warn(`No suitable match found for "${ipo.companyName}". Highest Score: ${highestScore.toFixed(3)}`);
-            }
-        }
-
-        if (!targetIPO) {
-            return {
-                summary: { allotted: 0, notAllotted: 0, error: panNumbers.length },
-                details: panNumbers.map(pan => ({ pan, status: 'UNKNOWN', message: 'IPO not found in KFintech' }))
-            };
-        }
-
-        // 2. Launch Browser
-        console.log(`Launching browser to check allotment for "${targetIPO.name}"...`);
-        browser = await chromium.launch({
-            headless: true, // Use headless for production
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
+        const response = await axios.post(`${WORKER_URL}/check-status`, {
+            ipoName: ipo.companyName,
+            clientId: ipo.kfintech_client_id, // Pass if available
+            panNumbers
         });
 
-        const context = await browser.newContext();
-        const page = await context.newPage();
-
-        // 3. Navigate
-        console.log(`Navigating to ${HOME_URL}...`);
-        await page.goto(HOME_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-        // 4. Select IPO (Handle Material UI Dropdown)
-        try {
-            console.log("Selecting IPO from dropdown...");
-            // Click the dropdown trigger
-            await page.click('#demo-multiple-name');
-
-            // Wait for listbox
-            await page.waitForSelector('ul[role="listbox"]');
-
-            // Click the option
-            // We use standard string inclusion. The name from scraper should match exactly or closely.
-            // Using a case-insensitive contains selector for safety
-            const optionSelector = `li[role="option"]:has-text("${targetIPO.name}")`;
-
-            if (await page.isVisible(optionSelector)) {
-                await page.click(optionSelector);
-                console.log("IPO selected.");
-            } else {
-                console.warn(`Option for "${targetIPO.name}" not visible in dropdown.`);
-                // Fallback: try scrolling or fuzzy match if necessary, but name should be exact from scraper
-                throw new Error("IPO Option not found in dropdown");
-            }
-
-            // Click outside or ensure dropdown closed? Use escape usually, or clicking option closes it.
-            // MUI Select closes on option click.
-
-            // Wait for stability
-            await page.waitForTimeout(500);
-
-        } catch (e) {
-            console.error("Error selecting IPO from dropdown:", e.message);
-            throw e; // Cannot proceed without selecting IPO
+        return response.data;
+    } catch (error) {
+        console.error('Error calling KFintech Worker:', error.message);
+        if (error.response) {
+            console.error('Worker Response:', error.response.data);
         }
 
-        // 5. Select PAN Radio
-        try {
-            // Identified as input[value='PAN']
-            await page.click("input[value='PAN']");
-        } catch (e) {
-            console.warn("Could not click PAN radio by value, trying label...");
-            await page.click('label:has-text("PAN")');
-        }
-
-        // 6. Iterate PANs
-        for (const pan of panNumbers) {
-            try {
-                console.log(`Checking PAN: ${pan}`);
-
-                // Clear and Enter PAN
-                // Selector: #outlined-start-adornment
-                await page.fill('#outlined-start-adornment', '');
-                await page.fill('#outlined-start-adornment', pan);
-
-                // Submit
-                // Selector: button.content-button
-                await page.click('button.content-button');
-
-                // Wait for result
-                // Results appear in .MuiTable-root (table) or .MuiDialog-root (popup if not found)
-                const resultSelector = '.MuiTable-root, .MuiDialog-root';
-                await page.waitForSelector(resultSelector, { timeout: 5000 });
-
-                // Parse content
-                const pageContent = await page.content();
-                const $ = cheerio.load(pageContent);
-                const bodyText = $('body').text(); // Naive text check is usually sufficient for "Allotted" vs "Not Allotted"
-
-                let status = 'UNKNOWN';
-                let message = 'No info';
-                let units = 0;
-
-                // Close dialog if present (to reset state for next check)
-                if (await page.isVisible('.MuiDialog-root')) {
-                    const dialogText = await page.textContent('.MuiDialog-root');
-                    if (dialogText.includes('not found') || dialogText.includes('invalid')) {
-                        status = 'NOT_APPLIED';
-                        message = dialogText.trim();
-                    } else if (dialogText.includes('Not Allotted')) {
-                        status = 'NOT_ALLOTTED';
-                        message = dialogText.trim();
-                    } else {
-                        message = dialogText.trim();
-                    }
-
-                    // Click outside or close button to dismiss dialog?
-                    // Subagent clicked (581, 574) which might be a close button or backdrop.
-                    // Usually sending Escape works.
-                    await page.keyboard.press('Escape');
-                    await page.waitForTimeout(500);
-                } else if (await page.isVisible('.MuiTable-root')) {
-                    // Table implies success/record found
-                    if (bodyText.includes('Alloted') || bodyText.includes('Allotted')) { // Spelled 'Alloted' sometimes
-                        const match = bodyText.match(/Alloted\s*[:\-]?\s*(\d+)/i) || bodyText.match(/Allotted\s*[:\-]?\s*(\d+)/i);
-                        units = match ? parseInt(match[1]) : 0;
-                        if (units > 0) {
-                            status = 'ALLOTTED';
-                            message = `Allotted ${units} Shares`;
-                        } else {
-                            status = 'NOT_ALLOTTED';
-                            message = 'Allotted 0 Shares';
-                        }
-                    } else {
-                        // Table with no allotment text?
-                        status = 'NOT_ALLOTTED';
-                        message = 'Record found but no allotment info';
-                    }
-                }
-
-                results.push({ pan, status, units, message });
-                console.log(`  -> ${status}: ${message}`);
-
-                // Wait before next
-                await page.waitForTimeout(1000);
-
-            } catch (err) {
-                console.error(`Error processing PAN ${pan}:`, err.message);
-                results.push({ pan, status: 'ERROR', message: err.message });
-                // Try to recover state (reload page?)
-                await page.reload();
-                // If we reload, we must re-select IPO... complex logic.
-                // For now, simpler to just continue and hope state is fine or previous catch handled dialog.
-            }
-        }
-
-    } catch (e) {
-        console.error("Browser Automation Error:", e);
-        // Fallback for all remaining PANs?
-        // ..
-    } finally {
-        if (browser) await browser.close();
+        return {
+            summary: { allotted: 0, notAllotted: 0, error: panNumbers.length },
+            details: panNumbers.map(pan => ({ pan, status: 'ERROR', message: 'Worker Request Failed' }))
+        };
     }
-
-    return {
-        summary: {
-            allotted: results.filter(r => r.status === 'ALLOTTED').length,
-            notAllotted: results.filter(r => r.status === 'NOT_ALLOTTED').length,
-            error: results.filter(r => r.status === 'ERROR').length
-        },
-        details: results
-    };
 };
