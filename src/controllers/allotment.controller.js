@@ -53,7 +53,8 @@ export const checkAllotment = async (req, res) => {
                 now - new Date(record.lastChecked).getTime() <
                 (TTL[record.status] || TTL.UNKNOWN) &&
                 !record.message?.includes("Registrar not supported") &&
-                !record.message?.includes("IPO not found")
+                !record.message?.includes("IPO not found") &&
+                !record.message?.includes("Worker Request Failed")
             ) {
                 results.push({
                     pan,
