@@ -60,6 +60,8 @@ export const checkAllotment = async (req, res) => {
                     pan,
                     status: record.status,
                     units: record.units,
+                    status: record.status,
+                    units: record.units,
                     message: record.message
                 });
             } else {
@@ -94,6 +96,9 @@ export const checkAllotment = async (req, res) => {
                 await AllotmentResult.findOneAndUpdate(
                     { ipoId: ipo._id, panNumber: item.pan },
                     {
+                        status: item.status,
+                        units: item.units || 0,
+                        message: item.message,
                         status: item.status,
                         units: item.units || 0,
                         message: item.message,
