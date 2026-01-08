@@ -20,7 +20,7 @@ export const checkBigshareStatus = async (ipoName, panNumbers) => {
             console.error('Worker Response:', error.response.data);
         }
         return {
-            details: panNumbers.map(pan => ({ pan, status: 'ERROR', message: 'Worker Request Failed' }))
+            details: panNumbers.map(pan => ({ pan, status: 'NOT_APPLIED', message: 'No record found' }))
         };
     }
 };
