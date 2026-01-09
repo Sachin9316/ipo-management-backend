@@ -189,7 +189,7 @@ export const scrapeIPOData = async (limit = 3) => {
 };
 
 import { scrapeChittorgarhSubscription } from './chittorgarh.service.js';
-import { scrapeChittorgarhIPOs } from './chittorgarh-list.service.js';
+import { scrapeChittorgarhIPOs, fetchChittorgarhAPIData } from './chittorgarh-list.service.js';
 
 export const scrapeAndSaveIPOData = async (limit = 3) => {
     try {
@@ -199,13 +199,117 @@ export const scrapeAndSaveIPOData = async (limit = 3) => {
         console.log("Step 1b: Scraping basic IPO data from Chittorgarh...");
         const chittorgarhIpos = await scrapeChittorgarhIPOs(limit);
 
-        // Merge and deduplicate by slug (prefer IPOWatch if conflict, or just merge)
-        // We put Chittorgarh first, then IPOWatch overwrites in Map if duplicate slug
+        console.log("Step 1c: Fetching data from new Chittorgarh API...");
+        const apiDataList = await fetchChittorgarhAPIData();
+        console.log(`Fetched ${apiDataList.length} records from API.`);
+
+        // Create Master Map - Seeding with API Data FIRST as Primary Source
         const ipoMap = new Map();
-        chittorgarhIpos.forEach(ipo => ipoMap.set(ipo.slug, ipo));
-        ipowatchIpos.forEach(ipo => ipoMap.set(ipo.slug, ipo));
+
+        // 1. Add API Data (Authoritative for Name, Dates, Price, Size)
+        apiDataList.forEach(item => {
+            // Default Date Calculations
+            const closeDate = item.close_date ? new Date(item.close_date) : new Date();
+            // Estimate Allotment ~2-3 days after close, Refund ~3-4 days
+            const allotmentDate = item.close_date ? new Date(closeDate.getTime() + 3 * 24 * 60 * 60 * 1000) : new Date();
+            const refundDate = item.close_date ? new Date(closeDate.getTime() + 4 * 24 * 60 * 60 * 1000) : new Date();
+
+            ipoMap.set(item.slug, {
+                ...item,
+                // Required Defaults for Schema Validation
+                allotment_date: allotmentDate,
+                refund_date: refundDate,
+                lot_size: 0,
+                lot_price: 0,
+                registrarName: "N/A",
+                registrarLink: "",
+
+                gmp: [],
+                subscription: { qib: 0, nii: 0, retail: 0, total: 0 },
+                status: calculateStatus(item.open_date, item.close_date, item.listing_date),
+                ipoType: "MAINBOARD",
+                isAllotmentOut: false
+            });
+        });
+
+        // 2. Merge IPOWatch Data (Source for GMP, Subscription, IPO Type)
+        ipowatchIpos.forEach(scraped => {
+            let match = ipoMap.get(scraped.slug);
+
+            // Fuzzy match if exact slug not found
+            if (!match) {
+                let bestScore = 0;
+                let bestSlug = null;
+                for (const [slug, apiItem] of ipoMap.entries()) {
+                    const score = getSimilarity(scraped.companyName, apiItem.companyName);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestSlug = slug;
+                    }
+                }
+                if (bestScore > 0.3 && bestSlug) {
+                    match = ipoMap.get(bestSlug);
+                }
+            }
+
+            if (match) {
+                // Merge Scraped Data INTO API Record
+                // PRESERVE API Fields (Name, Dates, Price, Size)
+                // ONLY update missing or complementary fields
+
+                // GMP - Always take from scraper if available
+                if (scraped.gmp && scraped.gmp.length > 0) match.gmp = scraped.gmp;
+
+                // Subscription - Take scraper if API didn't provide (API currently doesn't)
+                if (scraped.subscription && scraped.subscription.total > match.subscription?.total) {
+                    match.subscription = scraped.subscription;
+                }
+
+                // IPO Type - Scraper usually knows best (SME vs Mainboard)
+                if (scraped.ipoType) match.ipoType = scraped.ipoType;
+
+                // Status - Re-calculate based on authoritative API dates
+                match.status = calculateStatus(match.open_date, match.close_date, match.listing_date);
+
+                // Links
+                if (scraped.drhp_pdf) match.drhp_pdf = scraped.drhp_pdf;
+                if (scraped.rhp_pdf) match.rhp_pdf = scraped.rhp_pdf;
+                if (!match.link && scraped.link) match.link = scraped.link;
+
+                console.log(`Merged Scraper data into API record for: ${match.companyName}`);
+            } else {
+                // No match found in API list -> Add as new record (Source: IPOWatch only)
+                // This captures IPOs that might not be in the API feed yet
+                ipoMap.set(scraped.slug, scraped);
+            }
+        });
+
+        // 3. Merge Chittorgarh Legacy Data (Optional, mostly for extra sub data or failover)
+        chittorgarhIpos.forEach(legacy => {
+            let match = ipoMap.get(legacy.slug);
+            // ... simplify legacy merge or skip if we trust API + IPOWatch enough
+            // For now, let's skip deep merging legacy unless it's a new record
+            if (!match) {
+                // Try fuzzy
+                let bestScore = 0;
+                let bestSlug = null;
+                for (const [slug, existing] of ipoMap.entries()) {
+                    const score = getSimilarity(legacy.companyName, existing.companyName);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestSlug = slug;
+                    }
+                }
+                if (bestScore > 0.3 && bestSlug) match = ipoMap.get(bestSlug);
+            }
+
+            if (!match) {
+                ipoMap.set(legacy.slug, legacy);
+            }
+        });
 
         const ipos = Array.from(ipoMap.values());
+
         console.log(`Total IPOs to process: ${ipos.length}`);
 
         console.log("Step 2: Scraping live subscription data from Chittorgarh...");
@@ -332,8 +436,21 @@ export const scrapeAndSaveIPOData = async (limit = 3) => {
                     }
 
                     // Update other fields but preserve gmp array
-                    // USER REQUEST: Do not re-scrape/update companyName and registrarName if already stored
-                    const { gmp, companyName, registrarName, registrarLink, icon, ...otherData } = ipo;
+                    // USER REQUEST (UPDATED): Allow overwriting companyName with new API data
+                    // We still keep registrarName protected if it's "N/A" (default) to avoid overwriting good data with bad
+                    const { gmp, registrarName, registrarLink, icon, ...otherData } = ipo;
+
+                    // Only exclude registrar if our new data is invalid/default
+                    if (ipo.registrarName !== "N/A") {
+                        // actually, we put it in otherData if we want to update it. 
+                        // But currently api provides "N/A". So we simply DON'T include it in the $set if we exclude it here.
+                        // Wait, if I exclude `registrarName` from `otherData`, it won't verify.
+                    }
+
+                    // Simple approach: Use ...otherData. 
+                    // Since ipo.registrarName is "N/A" (from api defaults), we should NOT let it overwrite existing valid registrar.
+                    // So we KEEP excluding registrarName from the spread, and handled logic manually or just leave it.
+                    // But companyName IS removed from exclusion list below.
 
                     await Mainboard.updateOne(
                         { slug: ipo.slug },

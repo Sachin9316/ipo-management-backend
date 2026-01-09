@@ -14,6 +14,17 @@ const getFinancialYear = () => {
 };
 
 const MAINBOARD_URL_TEMPLATE = (month, year, fy) => `https://webnodejs.chittorgarh.com/cloud/report/data-read/21/1/${month}/${year}/${fy}/0/0/0?search=&v=21-21`;
+const API_URL_TEMPLATE = (month, year, fy) => `https://webnodejs.chittorgarh.com/cloud/report/data-read/82/1/1/${year}/${fy}/0/all/0?search=&v=16-05`;
+
+const stripHtml = (html) => {
+    if (!html) return "";
+    let clean = html.replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ').trim();
+    // User Request: Remove extra words after dot/Ltd (e.g. "Ltd. IPO CT")
+    // Also remove "IPO" suffix if present
+    clean = clean.replace(/(?:Ltd\.|Limited)[\s\S]*$/i, (match) => match.match(/Ltd\.|Limited/i)[0]);
+    clean = clean.replace(/\s+IPO\s*$/i, '');
+    return clean.trim();
+};
 
 // Helper: Parse Date (e.g., "Dec 24, 2025" -> Date)
 const parseDate = (str) => {
@@ -50,6 +61,54 @@ export const fetchChittorgarhMainboardList = async () => {
         return [];
     } catch (error) {
         console.error('Chittorgarh List API Error:', error.message);
+        return [];
+    }
+};
+
+export const fetchChittorgarhAPIData = async () => {
+    // Note: The API seems to rely on the Year and Financial Year.
+    // The user's example used 2026 and 2025-26 for report 82.
+    // We will use our helper functions but ensure we cover the relevant period.
+    const year = getYear();
+    const fy = getFinancialYear();
+    // Using simple month=1 placeholder as per user's URL 82/1/1... though URL template might not use month for this report?
+    // User URL: .../82/1/1/2026/2025-26/...
+    // Let's stick to the user's structure.
+
+    // We might want to fetch for current year AND next year/fy if close to transition?
+    // For now, let's just fetch for standard derived values.
+    const url = API_URL_TEMPLATE(1, year, fy);
+
+    try {
+        console.log(`Fetching Chittorgarh API Data from: ${url}`);
+        const { data } = await axios.get(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0' }
+        });
+
+        if (data && data.reportTableData) {
+            return data.reportTableData.map(item => {
+                const openDate = parseDate(item['~Issue_Open_Date']);
+                const closeDate = parseDate(item['~IssueCloseDate']);
+                const listingDate = parseDate(item['~ListingDate']);
+
+                return {
+                    companyName: stripHtml(item['Company']),
+                    slug: slugify(stripHtml(item['Company']), { lower: true, strict: true }),
+                    open_date: openDate,
+                    close_date: closeDate,
+                    listing_date: listingDate,
+                    min_price: parseFloat(stripHtml(item['Issue Price (Rs.)']).split('to')[0].trim()) || 0,
+                    max_price: parseFloat(stripHtml(item['Issue Price (Rs.)']).split('to')[1]?.trim()) || parseFloat(stripHtml(item['Issue Price (Rs.)'])) || 0,
+                    issueSize: parseIssueSize(item['Total Issue Amount (Incl.Firm reservations) (Rs.cr.)']),
+                    listing_at: stripHtml(item['Listing at']),
+                    lead_manager: stripHtml(item['Left Lead Manager']),
+                    icon: item['~compare_image'] || ''
+                };
+            });
+        }
+        return [];
+    } catch (error) {
+        console.error('Chittorgarh API Fetch Error:', error.message);
         return [];
     }
 };
