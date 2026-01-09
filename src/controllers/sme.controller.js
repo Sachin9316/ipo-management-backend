@@ -91,7 +91,7 @@ export const getAllSMEIPOs = async (req, res) => {
         }
 
         const smeIPOs = await Mainboard.find(filter)
-            .select('companyName slug icon ipoType status open_date close_date listing_date lot_size lot_price min_price max_price gmp isAllotmentOut')
+            .select('companyName slug icon ipoType status open_date close_date listing_date lot_size lot_price min_price max_price gmp isAllotmentOut subscription issueSize rhp_pdf drhp_pdf')
             .sort({ open_date: -1 })
             .skip(skip)
             .limit(limit);

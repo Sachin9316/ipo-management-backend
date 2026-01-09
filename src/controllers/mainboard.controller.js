@@ -102,7 +102,7 @@ export const getAllMainboards = async (req, res) => {
         console.log("Applied Filter:", filter);
 
         const mainboards = await Mainboard.find(filter)
-            .select('companyName slug icon ipoType status open_date close_date listing_date lot_size lot_price min_price max_price gmp isAllotmentOut')
+            .select('companyName slug icon ipoType status open_date close_date listing_date lot_size lot_price min_price max_price gmp isAllotmentOut subscription issueSize rhp_pdf drhp_pdf')
             .sort({ open_date: -1 })
             .skip(skip)
             .limit(limit);
@@ -260,7 +260,7 @@ export const getListedIPOs = async (req, res) => {
         const skip = (page - 1) * limit;
 
         const listedIPOs = await Mainboard.find({ status: 'LISTED' })
-            .select('companyName slug icon ipoType status open_date close_date listing_date lot_size lot_price min_price max_price gmp isAllotmentOut')
+            .select('companyName slug icon ipoType status open_date close_date listing_date lot_size lot_price min_price max_price gmp isAllotmentOut subscription issueSize rhp_pdf drhp_pdf')
             .sort({ listing_date: -1 })
             .skip(skip)
             .limit(limit);
