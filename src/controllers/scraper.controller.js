@@ -1,4 +1,4 @@
-import { scrapeIPOData, scrapeAndSaveIPOData } from '../services/scraper.service.js';
+import { scrapeIPOData, scrapeAndSaveIPOData, scrapeAndSaveMainboardIPOs, scrapeAndSaveSmeIPOs } from '../services/scraper.service.js';
 import { syncAllGMPData } from '../services/gmp-scraper.service.js';
 
 export const previewScrapedData = async (req, res) => {
@@ -35,6 +35,34 @@ export const syncScrapedData = async (req, res) => {
             success: false,
             message: `Sync failed: ${error.message}`
         });
+    }
+};
+
+export const syncMainboardData = async (req, res) => {
+    try {
+        const { limit } = req.query;
+        const result = await scrapeAndSaveMainboardIPOs(limit ? parseInt(limit) : 10);
+        res.status(200).json({
+            success: true,
+            message: `Mainboard Sync completed. Saved/Updated ${result.count} out of ${result.total} IPOs.`,
+            details: result
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: `Mainboard Sync failed: ${error.message}` });
+    }
+};
+
+export const syncSMEData = async (req, res) => {
+    try {
+        const { limit } = req.query;
+        const result = await scrapeAndSaveSmeIPOs(limit ? parseInt(limit) : 10);
+        res.status(200).json({
+            success: true,
+            message: `SME Sync completed. Saved/Updated ${result.count} out of ${result.total} IPOs.`,
+            details: result
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: `SME Sync failed: ${error.message}` });
     }
 };
 

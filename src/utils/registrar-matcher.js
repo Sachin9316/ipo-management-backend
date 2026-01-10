@@ -13,11 +13,17 @@ export const matchRegistrar = (scrapedName, dbRegistrars) => {
     let bestScore = 0;
     const THRESHOLD = 0.3; // Using same threshold as matching.js
 
-    // Clean the scraped name for better matching (remove Ltd, Pvt, etc.)
-    const cleanScraped = scrapedName.toLowerCase().replace(/pvt|ltd|limited|private/g, '').trim();
+    // Clean the scraped name for better matching
+    const clean = (s) => s.toLowerCase()
+        .replace(/\(india\)/g, '')
+        .replace(/pvt|ltd|limited|private|services|securities|financial/g, '')
+        .replace(/[^a-z0-9]/g, '')
+        .trim();
+
+    const cleanScraped = clean(scrapedName);
 
     for (const reg of dbRegistrars) {
-        const cleanDb = reg.name.toLowerCase().replace(/pvt|ltd|limited|private/g, '').trim();
+        const cleanDb = clean(reg.name);
 
         // 1. Direct includes check
         if (cleanDb.includes(cleanScraped) || cleanScraped.includes(cleanDb)) {

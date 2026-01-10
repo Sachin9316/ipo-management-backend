@@ -1,5 +1,5 @@
 import express from 'express';
-import { previewScrapedData, syncScrapedData, syncGMPData } from '../controllers/scraper.controller.js';
+import { previewScrapedData, syncScrapedData, syncGMPData, syncMainboardData, syncSMEData } from '../controllers/scraper.controller.js';
 import { protect, admin } from '../middlewares/auth.middleware.js';
 
 const router = express.Router();
@@ -43,6 +43,46 @@ router.get('/preview', protect, admin, previewScrapedData);
  *         description: Sync completed successfully
  */
 router.post('/sync', protect, admin, syncScrapedData);
+
+/**
+ * @swagger
+ * /api/scraper/sync-mainboard:
+ *   post:
+ *     summary: Scrape and save ONLY Mainboard IPO data (Admin only)
+ *     tags: [Scraper]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Number of IPOs to process (default 10)
+ *     responses:
+ *       200:
+ *         description: Mainboard Sync completed
+ */
+router.post('/sync-mainboard', protect, admin, syncMainboardData);
+
+/**
+ * @swagger
+ * /api/scraper/sync-sme:
+ *   post:
+ *     summary: Scrape and save ONLY SME IPO data (Admin only)
+ *     tags: [Scraper]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Number of IPOs to process (default 10)
+ *     responses:
+ *       200:
+ *         description: SME Sync completed
+ */
+router.post('/sync-sme', protect, admin, syncSMEData);
 
 /**
  * @swagger

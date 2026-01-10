@@ -15,7 +15,7 @@ const getFinancialYear = () => {
 
 const API_URL_TEMPLATE = (month, year, fy) => `https://webnodejs.chittorgarh.com/cloud/report/data-read/82/1/1/${year}/${fy}/0/all/0?search=&v=16-05`;
 
-const stripHtml = (html) => {
+export const stripHtml = (html) => {
     if (!html) return "";
     let clean = html.replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ').trim();
     // User Request: Remove extra words after dot/Ltd (e.g. "Ltd. IPO CT")
@@ -98,11 +98,25 @@ const fetchRawList = async () => {
     return Array.from(unique.values());
 };
 
-export const fetchChittorgarhAPIData = async () => {
+export const fetchChittorgarhAPIData = async (type = 'ALL') => {
     const rawData = await fetchRawList();
     return rawData.map(item => {
         let name = stripHtml(item['Company']);
         name = name.replace(/ IPO$/, "").trim();
+
+        // Determine type from 'Listing at'
+        const listingAt = stripHtml(item['Listing at'] || '');
+        let ipoType = 'MAINBOARD'; // Default
+
+        if (listingAt.toLowerCase().includes('sme')) {
+            ipoType = 'SME';
+        } else if (listingAt === '' || listingAt.toLowerCase() === 'na') {
+            // If listing info is missing, try heuristics or leave as is if possible
+            // But for the API list, it usually means it's Mainboard unless stated otherwise
+            ipoType = 'MAINBOARD';
+        }
+
+        if (type !== 'ALL' && ipoType !== type) return null; // Filter
 
         const openDate = parseDate(item['Opening Date']);
         const closeDate = parseDate(item['Closing Date']);
@@ -117,19 +131,26 @@ export const fetchChittorgarhAPIData = async () => {
             min_price: parseFloat(stripHtml(item['Issue Price (Rs.)']).split('to')[0].trim()) || 0,
             max_price: parseFloat(stripHtml(item['Issue Price (Rs.)']).split('to')[1]?.trim()) || parseFloat(stripHtml(item['Issue Price (Rs.)'])) || 0,
             issueSize: parseIssueSize(item['Total Issue Amount (Incl.Firm reservations) (Rs.cr.)']),
-            listing_at: stripHtml(item['Listing at']),
+            listing_at: listingAt,
+            ipoType: ipoType,
             lead_manager: stripHtml(item['Left Lead Manager']),
             icon: item['~compare_image'] || '',
             // Pass through hidden keys for scraping
             '~URLRewrite_Folder_Name': item['~URLRewrite_Folder_Name'],
-            '~id': item['~id']
+            '~id': item['~id'],
+            link: `https://www.chittorgarh.com/ipo/${item['~URLRewrite_Folder_Name']}/${item['~id']}/`
         };
-    });
+    }).filter(item => item !== null); // Remove nulls
 };
 
 // Helper to extract Lot Size and other details
 export const scrapeChittorgarhDetail = async (ipoObj) => {
-    const link = `https://www.chittorgarh.com/ipo/${ipoObj['~URLRewrite_Folder_Name']}/${ipoObj['~id']}/`;
+    let id = ipoObj['~id'];
+    if (!id && ipoObj['Company']) {
+        const idMatch = ipoObj['Company'].match(/\/(\d+)\//);
+        if (idMatch) id = idMatch[1];
+    }
+    const link = `https://www.chittorgarh.com/ipo/${ipoObj['~URLRewrite_Folder_Name']}/${id}/`;
 
     let details = {
         lotSize: 0,
@@ -140,7 +161,10 @@ export const scrapeChittorgarhDetail = async (ipoObj) => {
         maxPrice: 0,
         lotPrice: 0,
         rhp: '',
-        drhp: ''
+        drhp: '',
+        allotmentDate: null,
+        refundDate: null,
+        listingDate: null
     };
 
     try {
@@ -180,8 +204,8 @@ export const scrapeChittorgarhDetail = async (ipoObj) => {
         };
 
         // 2. Extract Data
-        const priceRange = getVal(['price band', 'issue price']);
-        const lotSizeStr = getVal(['lot size', 'minimum order quantity']);
+        const priceRange = getVal(['price band', 'issue price', 'price']);
+        const lotSizeStr = getVal(['lot size', 'minimum order quantity', 'market lot']);
         details.lotSize = lotSizeStr ? parseInt(lotSizeStr.replace(/[^0-9]/g, '')) : 0;
 
         // Price Calculation
@@ -195,25 +219,46 @@ export const scrapeChittorgarhDetail = async (ipoObj) => {
             }
         }
 
-        // Registrar Search
-        details.registrar = getVal(['registrar']);
-        details.registrarLink = linksMap.get('registrar');
+        // Registrar Extraction (Improved)
+        const findRegistrar = () => {
+            // Priority 1: Main table match
+            let name = getVal(['registrar', 'ipo registrar']);
+            let link = linksMap.get('registrar') || linksMap.get('ipo registrar');
 
-        // Text Fallback for Registrar
-        if (!details.registrar) {
-            $('h2, strong, b').each((i, el) => {
-                if ($(el).text().includes("Registrar")) {
-                    const parent = $(el).parent();
-                    const link = parent.find('a').first();
-                    if (link.length > 0) {
-                        details.registrar = link.text().trim();
-                        details.registrarLink = link.attr('href');
-                    } else {
-                        details.registrar = parent.text().replace("Registrar", "").trim();
-                    }
+            if (name && name.length > 3) return { name, link };
+
+            // Priority 2: Card structure (common in SME)
+            const regCard = $('.card:contains("Registrar"), .card:contains("Maashitla"), .card:contains("Bigshare"), .card:contains("Link Intime"), .card:contains("Kfin"), .card:contains("MUFG"), .card:contains("Skyline"), .card:contains("Cameo"), .card:contains("Purva"), .card:contains("Beetal")').first();
+            if (regCard.length > 0) {
+                const cardLink = regCard.find('a').first();
+                if (cardLink.length > 0 && cardLink.text().length > 3) {
+                    return { name: cardLink.text().trim(), link: cardLink.attr('href') };
                 }
-            });
-        }
+            }
+
+            // Priority 3: Header proximity
+            const regHeader = $('h2, h3, b, strong').filter((i, el) => $(el).text().includes("Registrar")).first();
+            if (regHeader.length > 0) {
+                const parent = regHeader.parent();
+                const link = parent.find('a').first();
+                if (link.length > 0) {
+                    return { name: link.text().trim(), link: link.attr('href') };
+                }
+                const text = parent.text().replace(/Registrar|:|IPO/gi, "").trim();
+                if (text.length > 3) return { name: text, link: null };
+            }
+
+            return { name: 'N/A', link: null };
+        };
+
+        const foundReg = findRegistrar();
+        details.registrar = foundReg.name;
+        details.registrarLink = foundReg.link ? (foundReg.link.startsWith('http') ? foundReg.link : `https://www.chittorgarh.com${foundReg.link}`) : '';
+
+        // Allotment & Other Dates
+        details.allotmentDate = parseDate(getVal(['allotment', 'basis of allotment']));
+        details.refundDate = parseDate(getVal(['refunds', 'initiation of refunds']));
+        details.listingDate = parseDate(getVal(['listing date']));
 
         return details;
 
@@ -223,7 +268,7 @@ export const scrapeChittorgarhDetail = async (ipoObj) => {
     }
 };
 
-export const scrapeChittorgarhIPOs = async (limit = 5) => {
+export const scrapeChittorgarhIPOs = async (limit = 5, type = 'ALL') => {
     console.log('Fetching Chittorgarh List (Report 82)...');
     const rawList = await fetchRawList();
 
@@ -256,9 +301,12 @@ export const scrapeChittorgarhIPOs = async (limit = 5) => {
 
         const finalStatus = calculateStatus(openDate, closeDate, rListingDate);
 
-        // Determine type from 'Listing at'
+        // Determine type from 'Listing at' or Lot Size Heuristic
         const listingAt = stripHtml(item['Listing at']);
-        const ipoType = (listingAt.includes('SME')) ? 'SME' : 'MAINBOARD';
+        const isSME = listingAt.toLowerCase().includes('sme') || (detail && detail.lotPrice > 50000);
+        const ipoType = isSME ? 'SME' : 'MAINBOARD';
+
+        if (type !== 'ALL' && ipoType !== type) continue;
 
         const ipoData = {
             companyName: name,
@@ -286,13 +334,16 @@ export const scrapeChittorgarhIPOs = async (limit = 5) => {
             registrarName: detail.registrar || "N/A",
             registrarLink: detail.registrarLink || "",
             lot_size: detail.lotSize,
-            lot_price: (detail.lotSize * detail.maxPrice),
-            min_price: detail.minPrice,
-            max_price: detail.maxPrice,
+            lot_price: detail.lotPrice || (detail.lotSize * detail.maxPrice),
+            min_price: detail.minPrice > 0 ? detail.minPrice : (parseFloat(item['Issue Price (Rs.)']) || 0),
+            max_price: detail.maxPrice > 0 ? detail.maxPrice : (parseFloat(item['Issue Price (Rs.)']) || 0),
             isAllotmentOut: false,
             drhp_pdf: detail.drhp || "",
             rhp_pdf: detail.rhp || "",
             link: detail.link,
+            allotment_date: detail.allotmentDate || (closeDate ? new Date(closeDate.getTime() + 3 * 24 * 60 * 60 * 1000) : null),
+            refund_date: detail.refundDate || (closeDate ? new Date(closeDate.getTime() + 4 * 24 * 60 * 60 * 1000) : null),
+            listing_date: detail.listingDate || rListingDate || (closeDate ? new Date(closeDate.getTime() + 6 * 24 * 60 * 60 * 1000) : null),
         };
 
         ipos.push(ipoData);
