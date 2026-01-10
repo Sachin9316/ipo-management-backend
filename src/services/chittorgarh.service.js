@@ -42,15 +42,16 @@ export const scrapeChittorgarhSubscription = async () => {
 
                 if (response.data && response.data.reportTableData) {
                     const records = response.data.reportTableData.map(item => ({
-                        companyName: item['Company Name'],
+                        companyName: item['Company'] || item['Company Name'],
                         qib: parseFloat(item['QIB (x)']) || 0,
                         nii: parseFloat(item['NII (x)']) || 0,
                         snii: parseFloat(item['sNII (x)']) || 0,
                         bnii: parseFloat(item['bNII (x)']) || 0,
                         retail: parseFloat(item['Retail (x)']) || 0,
                         employee: parseFloat(item['Employee (x)']) || 0,
+                        shareholders: parseFloat(item['Shareholder (x)']) || 0,
                         total: parseFloat(item['Total (x)']) || 0,
-                        applications: item['Applications'] || '0'
+                        applications: parseInt((item['Applications'] || '0').replace(/,/g, '')) || 0
                     }));
 
                     console.log(`Fetched ${records.length} records.`);

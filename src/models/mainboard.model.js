@@ -28,7 +28,9 @@ const mainboardSchema = new mongoose.Schema({
         snii: { type: Number, default: 0, set: setTwoDecimal }, // SNI (<10L)
         retail: { type: Number, default: 0, set: setTwoDecimal },
         employee: { type: Number, default: 0, set: setTwoDecimal },
+        shareholders: { type: Number, default: 0, set: setTwoDecimal },
         total: { type: Number, default: 0, set: setTwoDecimal },
+        applications: { type: Number, default: 0 }
     },
     open_date: { type: Date, required: true },
     close_date: { type: Date, required: true },

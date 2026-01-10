@@ -13,7 +13,6 @@ const getFinancialYear = () => {
     return `${year - 1}-${year.toString().slice(-2)}`;
 };
 
-const MAINBOARD_URL_TEMPLATE = (month, year, fy) => `https://webnodejs.chittorgarh.com/cloud/report/data-read/21/1/${month}/${year}/${fy}/0/0/0?search=&v=21-21`;
 const API_URL_TEMPLATE = (month, year, fy) => `https://webnodejs.chittorgarh.com/cloud/report/data-read/82/1/1/${year}/${fy}/0/all/0?search=&v=16-05`;
 
 const stripHtml = (html) => {
@@ -44,77 +43,105 @@ const calculateStatus = (open, close, listing) => {
     return "CLOSED";
 };
 
-export const fetchChittorgarhMainboardList = async () => {
+// Shared Fetcher for Report 82 (List)
+const fetchRawList = async () => {
     const month = getMonth();
-    const year = getYear();
-    const fy = getFinancialYear();
-    const url = MAINBOARD_URL_TEMPLATE(month, year, fy);
+    const currentYear = getYear();
+    const fy = getFinancialYear(); // Returns e.g. "2025-26" for Jan 2026
 
-    try {
-        const { data } = await axios.get(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0' }
-        });
+    // We need to fetch for Current Year AND Previous Year to cover transition IPOs (e.g. Dec-Jan)
+    // URL structure for Report 82 seems to be .../Year/FY/...
 
-        if (data && data.reportTableData) {
-            return data.reportTableData;
+    // 1. Current Year (e.g. 2026, 2025-26)
+    const urlCurrent = API_URL_TEMPLATE(month, currentYear, fy);
+
+    // 2. Previous Year (e.g. 2025, 2025-26 OR 2024-25??)
+    // If we are in Jan 2026 -> FY 25-26.
+    // Dec 2025 -> FY 25-26.
+    // So prevYear=2025, fy=2025-26. This is valid.
+
+    const prevYear = currentYear - 1;
+    let prevFy = fy; // Default same FY
+
+    // Verify FY logic: 
+    // If today is Jan 2026 -> FY 25-26.
+    // Dec 2025 -> FY 25-26.
+    // So prevYear=2025, fy=2025-26. This is valid.
+
+    const urlPrev = API_URL_TEMPLATE(month, prevYear, prevFy);
+
+    let allData = [];
+
+    const fetchData = async (u) => {
+        try {
+            const { data } = await axios.get(u, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+            return (data && data.reportTableData) ? data.reportTableData : [];
+        } catch (e) {
+            console.error(`Error fetching list from ${u}:`, e.message);
+            return [];
         }
-        return [];
-    } catch (error) {
-        console.error('Chittorgarh List API Error:', error.message);
-        return [];
+    };
+
+    const [dataCurrent, dataPrev] = await Promise.all([
+        fetchData(urlCurrent),
+        fetchData(urlPrev)
+    ]);
+
+    // Merge and Deduplicate by Company Name or Slug
+    allData = [...dataCurrent, ...dataPrev];
+    const unique = new Map();
+    for (const item of allData) {
+        if (!item['Company']) continue;
+        unique.set(item['Company'], item);
     }
+
+    return Array.from(unique.values());
 };
 
 export const fetchChittorgarhAPIData = async () => {
-    // Note: The API seems to rely on the Year and Financial Year.
-    // The user's example used 2026 and 2025-26 for report 82.
-    // We will use our helper functions but ensure we cover the relevant period.
-    const year = getYear();
-    const fy = getFinancialYear();
-    // Using simple month=1 placeholder as per user's URL 82/1/1... though URL template might not use month for this report?
-    // User URL: .../82/1/1/2026/2025-26/...
-    // Let's stick to the user's structure.
+    const rawData = await fetchRawList();
+    return rawData.map(item => {
+        let name = stripHtml(item['Company']);
+        name = name.replace(/ IPO$/, "").trim();
 
-    // We might want to fetch for current year AND next year/fy if close to transition?
-    // For now, let's just fetch for standard derived values.
-    const url = API_URL_TEMPLATE(1, year, fy);
+        const openDate = parseDate(item['Opening Date']);
+        const closeDate = parseDate(item['Closing Date']);
+        const listingDate = parseDate(item['Listing Date']);
 
-    try {
-        console.log(`Fetching Chittorgarh API Data from: ${url}`);
-        const { data } = await axios.get(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0' }
-        });
-
-        if (data && data.reportTableData) {
-            return data.reportTableData.map(item => {
-                const openDate = parseDate(item['~Issue_Open_Date']);
-                const closeDate = parseDate(item['~IssueCloseDate']);
-                const listingDate = parseDate(item['~ListingDate']);
-
-                return {
-                    companyName: stripHtml(item['Company']),
-                    slug: slugify(stripHtml(item['Company']), { lower: true, strict: true }),
-                    open_date: openDate,
-                    close_date: closeDate,
-                    listing_date: listingDate,
-                    min_price: parseFloat(stripHtml(item['Issue Price (Rs.)']).split('to')[0].trim()) || 0,
-                    max_price: parseFloat(stripHtml(item['Issue Price (Rs.)']).split('to')[1]?.trim()) || parseFloat(stripHtml(item['Issue Price (Rs.)'])) || 0,
-                    issueSize: parseIssueSize(item['Total Issue Amount (Incl.Firm reservations) (Rs.cr.)']),
-                    listing_at: stripHtml(item['Listing at']),
-                    lead_manager: stripHtml(item['Left Lead Manager']),
-                    icon: item['~compare_image'] || ''
-                };
-            });
-        }
-        return [];
-    } catch (error) {
-        console.error('Chittorgarh API Fetch Error:', error.message);
-        return [];
-    }
+        return {
+            companyName: name,
+            slug: slugify(name, { lower: true, strict: true }),
+            open_date: openDate,
+            close_date: closeDate,
+            listing_date: listingDate,
+            min_price: parseFloat(stripHtml(item['Issue Price (Rs.)']).split('to')[0].trim()) || 0,
+            max_price: parseFloat(stripHtml(item['Issue Price (Rs.)']).split('to')[1]?.trim()) || parseFloat(stripHtml(item['Issue Price (Rs.)'])) || 0,
+            issueSize: parseIssueSize(item['Total Issue Amount (Incl.Firm reservations) (Rs.cr.)']),
+            listing_at: stripHtml(item['Listing at']),
+            lead_manager: stripHtml(item['Left Lead Manager']),
+            icon: item['~compare_image'] || '',
+            // Pass through hidden keys for scraping
+            '~URLRewrite_Folder_Name': item['~URLRewrite_Folder_Name'],
+            '~id': item['~id']
+        };
+    });
 };
 
+// Helper to extract Lot Size and other details
 export const scrapeChittorgarhDetail = async (ipoObj) => {
     const link = `https://www.chittorgarh.com/ipo/${ipoObj['~URLRewrite_Folder_Name']}/${ipoObj['~id']}/`;
+
+    let details = {
+        lotSize: 0,
+        registrar: '',
+        registrarLink: '',
+        link: link,
+        minPrice: 0,
+        maxPrice: 0,
+        lotPrice: 0,
+        rhp: '',
+        drhp: ''
+    };
 
     try {
         const { data } = await axios.get(link, {
@@ -122,78 +149,99 @@ export const scrapeChittorgarhDetail = async (ipoObj) => {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
         });
+
         const $ = cheerio.load(data);
+        const dataMap = new Map();
+        const linksMap = new Map();
 
-        const details = {
-            listingDate: null,
-            priceBand: null,
-            issuePrice: null,
-            lotSize: 0,
-            registrar: '',
-            registrarLink: '',
-            listingAt: '',
-            rhp: '',
-            drhp: ''
-        };
+        // 1. Universal Table Scraper
+        $('table').each((i, table) => {
+            $(table).find('tr').each((j, row) => {
+                const cells = $(row).find('td, th');
+                if (cells.length >= 2) {
+                    let key = $(cells[0]).text().trim().replace(/[:?]/g, '');
+                    let value = $(cells[1]).text().trim();
+                    const normalizedKey = key.toLowerCase().replace(/\s+/g, ' ');
 
-        $('table tr').each((i, el) => {
-            const tds = $(el).find('td');
-            if (tds.length >= 2) {
-                const label = $(tds[0]).text().trim();
-                const value = $(tds[1]).text().trim();
-
-                if (label.includes('Listing Date')) details.listingDate = parseDate(value);
-                else if (label.includes('Price Band')) details.priceBand = value;
-                else if (label.includes('Issue Price')) details.issuePrice = value;
-                else if (label.includes('Lot Size')) { // "128 Shares"
-                    details.lotSize = parseInt(value.replace(/,/g, '')) || 0;
+                    if (normalizedKey && value) {
+                        dataMap.set(normalizedKey, value);
+                        const link = $(cells[1]).find('a').attr('href');
+                        if (link) linksMap.set(normalizedKey, link);
+                    }
                 }
-                else if (label.includes('Registrar')) {
-                    details.registrar = value;
-                    details.registrarLink = $(tds[1]).find('a').attr('href') || '';
-                }
-                else if (label.includes('Listing At')) details.listingAt = value; // "BSE, NSE"
+            });
+        });
+
+        const getVal = (keys) => {
+            for (const k of keys) {
+                if (dataMap.has(k)) return dataMap.get(k);
             }
-        });
-
-        // Find Prospectus
-        $('a').each((i, el) => {
-            const text = $(el).text().trim().toLowerCase();
-            if (text.includes('rhp') && !text.includes('draft')) details.rhp = $(el).attr('href');
-            if (text.includes('drhp') || text.includes('draft prospectus')) details.drhp = $(el).attr('href');
-        });
-
-        // Parse Prices
-        const priceStr = details.priceBand || details.issuePrice || "0";
-        const cleanPriceRange = priceStr.replace(/,/g, '');
-        const priceMatch = cleanPriceRange.match(/(\d+(?:\.\d+)?)(?:\s*to\s*[^\d]*(\d+(?:\.\d+)?))?/);
-        const minPrice = priceMatch ? parseFloat(priceMatch[1]) : 0;
-        const maxPrice = priceMatch && priceMatch[2] ? parseFloat(priceMatch[2]) : minPrice;
-
-        return {
-            ...details,
-            minPrice,
-            maxPrice,
-            link
+            return null;
         };
+
+        // 2. Extract Data
+        const priceRange = getVal(['price band', 'issue price']);
+        const lotSizeStr = getVal(['lot size', 'minimum order quantity']);
+        details.lotSize = lotSizeStr ? parseInt(lotSizeStr.replace(/[^0-9]/g, '')) : 0;
+
+        // Price Calculation
+        if (priceRange) {
+            const prices = priceRange.match(/(\d+[\d,]*(\.\d+)?)/g);
+            if (prices) {
+                const numericPrices = prices.map(p => parseFloat(p.replace(/,/g, '')));
+                details.minPrice = Math.min(...numericPrices);
+                details.maxPrice = Math.max(...numericPrices);
+                details.lotPrice = details.maxPrice * details.lotSize;
+            }
+        }
+
+        // Registrar Search
+        details.registrar = getVal(['registrar']);
+        details.registrarLink = linksMap.get('registrar');
+
+        // Text Fallback for Registrar
+        if (!details.registrar) {
+            $('h2, strong, b').each((i, el) => {
+                if ($(el).text().includes("Registrar")) {
+                    const parent = $(el).parent();
+                    const link = parent.find('a').first();
+                    if (link.length > 0) {
+                        details.registrar = link.text().trim();
+                        details.registrarLink = link.attr('href');
+                    } else {
+                        details.registrar = parent.text().replace("Registrar", "").trim();
+                    }
+                }
+            });
+        }
+
+        return details;
 
     } catch (error) {
-        console.error(`Error scraping detail for ${ipoObj['Company Name']}:`, error.message);
+        console.error(`Error scraping detail for ${ipoObj['Company Name'] || ipoObj['Company']}:`, error.message);
         return null;
     }
 };
 
 export const scrapeChittorgarhIPOs = async (limit = 5) => {
-    console.log('Fetching Chittorgarh Mainboard List...');
-    const rawList = await fetchChittorgarhMainboardList();
+    console.log('Fetching Chittorgarh List (Report 82)...');
+    const rawList = await fetchRawList();
 
-    // Sort by open date descending (if available) or assume API order is roughly chronological
-    // The API returns most recent? Let's take top N
+    // Sort by open date descending
+    rawList.sort((a, b) => {
+        const dateA = parseDate(a['~Issue_Open_Date'] || a['Opening Date'] || 0);
+        const dateB = parseDate(b['~Issue_Open_Date'] || b['Opening Date'] || 0);
+        if (!dateA || !dateB) return 0;
+        return dateB.getTime() - dateA.getTime();
+    });
+
     const processList = rawList.slice(0, limit);
     const ipos = [];
 
     for (const item of processList) {
-        const name = item['Company Name'];
+        let name = stripHtml(item['Company']);
+        name = name.replace(/ IPO$/, "").trim();
+
         if (!name) continue;
 
         console.log(`Processing Chittorgarh IPO: ${name}`);
@@ -201,22 +249,24 @@ export const scrapeChittorgarhIPOs = async (limit = 5) => {
         if (!detail) continue;
 
         // Map fields
-        const openDate = parseDate(item['~Issue_Open_Date']);
-        const closeDate = parseDate(item['~Issue_Close_Date']);
-        const listingDate = detail.listingDate;
-        // Approximation for unknown dates
-        const allotmentDate = closeDate ? new Date(closeDate.getTime() + 3 * 24 * 60 * 60 * 1000) : null;
-        const refundDate = closeDate ? new Date(closeDate.getTime() + 4 * 24 * 60 * 60 * 1000) : null;
+        const openDate = parseDate(item['Opening Date'] || item['~Issue_Open_Date']);
+        const closeDate = parseDate(item['Closing Date'] || item['~Issue_Close_Date']);
 
-        const finalStatus = calculateStatus(openDate, closeDate, listingDate);
+        const rListingDate = parseDate(item['Listing Date'] || item['~ListingDate']);
+
+        const finalStatus = calculateStatus(openDate, closeDate, rListingDate);
+
+        // Determine type from 'Listing at'
+        const listingAt = stripHtml(item['Listing at']);
+        const ipoType = (listingAt.includes('SME')) ? 'SME' : 'MAINBOARD';
 
         const ipoData = {
             companyName: name,
             slug: slugify(name, { lower: true, strict: true }),
-            icon: "https://cdn-icons-png.flaticon.com/512/25/25231.png",
-            ipoType: "MAINBOARD",
+            icon: item['~compare_image'] || "https://cdn-icons-png.flaticon.com/512/25/25231.png",
+            ipoType: ipoType,
             status: finalStatus,
-            gmp: [], // EXPLICITLY EMPTY
+            gmp: [],
             issueSize: parseIssueSize(item['Total Issue Amount (Incl.Firm reservations) (Rs.cr.)']),
             subscription: {
                 qib: roundToTwo(item['QIB (x)']),
@@ -229,20 +279,20 @@ export const scrapeChittorgarhIPOs = async (limit = 5) => {
             },
             open_date: openDate || new Date(),
             close_date: closeDate || new Date(),
-            listing_date: listingDate || new Date(),
-            refund_date: refundDate || new Date(),
-            allotment_date: allotmentDate || new Date(),
+            listing_date: rListingDate || new Date(),
+            refund_date: closeDate ? new Date(closeDate.getTime() + 4 * 24 * 60 * 60 * 1000) : null,
+            allotment_date: closeDate ? new Date(closeDate.getTime() + 3 * 24 * 60 * 60 * 1000) : null,
+
             registrarName: detail.registrar || "N/A",
             registrarLink: detail.registrarLink || "",
             lot_size: detail.lotSize,
             lot_price: (detail.lotSize * detail.maxPrice),
             min_price: detail.minPrice,
             max_price: detail.maxPrice,
-            bse_code_nse_code: detail.listingAt || "BSE, NSE",
             isAllotmentOut: false,
             drhp_pdf: detail.drhp || "",
             rhp_pdf: detail.rhp || "",
-            link: detail.link
+            link: detail.link,
         };
 
         ipos.push(ipoData);
