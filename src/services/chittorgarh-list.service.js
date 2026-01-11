@@ -122,6 +122,12 @@ export const fetchChittorgarhAPIData = async (type = 'ALL') => {
         const closeDate = parseDate(item['Closing Date']);
         const listingDate = parseDate(item['Listing Date']);
 
+        // Fix Icon URL: Prepend base URL if relative
+        let iconUrl = item['~compare_image'] || '';
+        if (iconUrl && iconUrl.startsWith('/')) {
+            iconUrl = `https://www.chittorgarh.net${iconUrl}`;
+        }
+
         return {
             companyName: name,
             slug: slugify(name, { lower: true, strict: true }),
@@ -134,7 +140,7 @@ export const fetchChittorgarhAPIData = async (type = 'ALL') => {
             listing_at: listingAt,
             ipoType: ipoType,
             lead_manager: stripHtml(item['Left Lead Manager']),
-            icon: item['~compare_image'] || '',
+            icon: iconUrl,
             // Pass through hidden keys for scraping
             '~URLRewrite_Folder_Name': item['~URLRewrite_Folder_Name'],
             '~id': item['~id'],
@@ -164,7 +170,8 @@ export const scrapeChittorgarhDetail = async (ipoObj) => {
         drhp: '',
         allotmentDate: null,
         refundDate: null,
-        listingDate: null
+        listingDate: null,
+        scrapedLogo: null // New field for logo from detail page
     };
 
     try {
@@ -177,6 +184,34 @@ export const scrapeChittorgarhDetail = async (ipoObj) => {
         const $ = cheerio.load(data);
         const dataMap = new Map();
         const linksMap = new Map();
+
+        // 0. Extract Logo (New)
+        // Try to find the image in the "Company Logo" value or nearby
+        // Often it's in a div with class 'dt-logo' or similar, or just the first image in the main content area that isn't the site logo.
+        // Chittorgarh usually puts the logo in a table or a specific div.
+        // Let's rely on standard content images first, skipping known site elements.
+        const logoImg = $('.content-box img[src*="logo"], .table-responsive img, img[alt*="Gujarat Kidney"]').not('.site-logo img').first();
+
+        // Fallback: Check if there's an image in the same row/table as "Company Name" or Header
+        let src = null;
+        if (logoImg.length > 0) src = logoImg.attr('src');
+
+        if (!src) {
+            // Try searching specifically for logo files in the main content
+            const possibleLogos = $('img').filter((i, el) => {
+                const s = $(el).attr('src') || '';
+                const alt = $(el).attr('alt') || '';
+                return (s.toLowerCase().includes('logo') || alt.toLowerCase().includes('logo')) &&
+                    !s.includes('chittorgarh-logo') &&
+                    !s.includes('site-logo');
+            });
+            if (possibleLogos.length > 0) src = possibleLogos.first().attr('src');
+        }
+
+        if (src) {
+            if (src.startsWith('/')) src = `https://www.chittorgarh.com${src}`;
+            details.scrapedLogo = src;
+        }
 
         // 1. Universal Table Scraper
         $('table').each((i, table) => {
@@ -219,41 +254,9 @@ export const scrapeChittorgarhDetail = async (ipoObj) => {
             }
         }
 
-        // Registrar Extraction (Improved)
-        const findRegistrar = () => {
-            // Priority 1: Main table match
-            let name = getVal(['registrar', 'ipo registrar']);
-            let link = linksMap.get('registrar') || linksMap.get('ipo registrar');
-
-            if (name && name.length > 3) return { name, link };
-
-            // Priority 2: Card structure (common in SME)
-            const regCard = $('.card:contains("Registrar"), .card:contains("Maashitla"), .card:contains("Bigshare"), .card:contains("Link Intime"), .card:contains("Kfin"), .card:contains("MUFG"), .card:contains("Skyline"), .card:contains("Cameo"), .card:contains("Purva"), .card:contains("Beetal")').first();
-            if (regCard.length > 0) {
-                const cardLink = regCard.find('a').first();
-                if (cardLink.length > 0 && cardLink.text().length > 3) {
-                    return { name: cardLink.text().trim(), link: cardLink.attr('href') };
-                }
-            }
-
-            // Priority 3: Header proximity
-            const regHeader = $('h2, h3, b, strong').filter((i, el) => $(el).text().includes("Registrar")).first();
-            if (regHeader.length > 0) {
-                const parent = regHeader.parent();
-                const link = parent.find('a').first();
-                if (link.length > 0) {
-                    return { name: link.text().trim(), link: link.attr('href') };
-                }
-                const text = parent.text().replace(/Registrar|:|IPO/gi, "").trim();
-                if (text.length > 3) return { name: text, link: null };
-            }
-
-            return { name: 'N/A', link: null };
-        };
-
-        const foundReg = findRegistrar();
-        details.registrar = foundReg.name;
-        details.registrarLink = foundReg.link ? (foundReg.link.startsWith('http') ? foundReg.link : `https://www.chittorgarh.com${foundReg.link}`) : '';
+        // Registrar: Set to N/A as per user request (manual management)
+        details.registrar = 'N/A';
+        details.registrarLink = '';
 
         // Allotment & Other Dates
         details.allotmentDate = parseDate(getVal(['allotment', 'basis of allotment']));
@@ -308,10 +311,18 @@ export const scrapeChittorgarhIPOs = async (limit = 5, type = 'ALL') => {
 
         if (type !== 'ALL' && ipoType !== type) continue;
 
+        // Fix Icon URL from List if relative
+        let listIcon = item['~compare_image'] || "";
+        if (listIcon && listIcon.startsWith('/')) {
+            listIcon = `https://www.chittorgarh.com${listIcon}`;
+        }
+
+        const finalIcon = detail.scrapedLogo || listIcon || "https://cdn-icons-png.flaticon.com/512/25/25231.png";
+
         const ipoData = {
             companyName: name,
             slug: slugify(name, { lower: true, strict: true }),
-            icon: item['~compare_image'] || "https://cdn-icons-png.flaticon.com/512/25/25231.png",
+            icon: finalIcon,
             ipoType: ipoType,
             status: finalStatus,
             gmp: [],

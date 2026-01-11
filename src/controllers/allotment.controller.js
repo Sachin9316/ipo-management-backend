@@ -73,12 +73,15 @@ export const checkAllotment = async (req, res) => {
         if (pansToCheck.length) {
             let apiResponse;
 
-            if (registrar?.toUpperCase().includes("KFIN")) {
+            // Resolve registrar name: prefer request, fallback to DB
+            const registrarToUse = (registrar || ipo.registrarName || "").toUpperCase();
+
+            if (registrarToUse.includes("KFIN")) {
                 apiResponse = await checkKFintechStatus(ipo, pansToCheck);
-            } else if (registrar?.toUpperCase().includes("MUFG") || registrar?.toUpperCase().includes("LINK") || registrar?.toUpperCase().includes("INTIME")) {
+            } else if (registrarToUse.includes("MUFG") || registrarToUse.includes("LINK") || registrarToUse.includes("INTIME")) {
                 // MUFG/Link Intime
                 apiResponse = await checkMUFGStatus(ipo.companyName, pansToCheck);
-            } else if (registrar?.toUpperCase().includes("BIGSHARE")) {
+            } else if (registrarToUse.includes("BIGSHARE")) {
                 // Bigshare
                 const { checkBigshareStatus } = await import('../services/bigshare.service.js');
                 apiResponse = await checkBigshareStatus(ipo.companyName, pansToCheck);

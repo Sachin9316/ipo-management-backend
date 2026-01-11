@@ -113,43 +113,120 @@ export const scrapeGMPFromIPOWatch = async () => {
     }
 };
 
+export const syncMainboardGMP = async () => {
+    try {
+        console.log('Fetching Mainboard GMP from InvestorGain API...');
+        const { data } = await axios.get('https://webnodejs.investorgain.com/cloud/ipodashboard/ipo-gmp-performance-read/IPO', { headers: HEADERS });
+
+        if (!data || !data.ipoList) {
+            console.error('Invalid response from InvestorGain API');
+            return 0;
+        }
+
+        const ipoList = data.ipoList;
+        console.log(`Fetched ${ipoList.length} Mainboard GMP entries.`);
+
+        const activeIpos = await Mainboard.find({
+            ipoType: 'MAINBOARD'
+        });
+
+        console.log(`Found ${activeIpos.length} existing Mainboard IPOs to check for updates.`);
+
+        let updatedCount = 0;
+
+        for (const item of ipoList) {
+            const companyName = item.company_short_name;
+            const gmpPrice = parseFloat(item.gmp) || 0;
+
+            // Find matching IPO in DB
+            // We'll prioritize exact match on slug if we had it, but we only have name here
+            // So we use our similarity matcher
+            let bestMatch = null;
+            let bestScore = 0;
+
+            for (const ipo of activeIpos) {
+                const score = isMatch(ipo.companyName, companyName) ? 1.0 : 0; // Use isMatch helper which handles slugify comparison
+                // Or better, use getSimilarity from elsewhere if imported, but isMatch is imported.
+                // wait, isMatch returns boolean. 
+                if (score) {
+                    bestMatch = ipo;
+                    break; // Exact-ish match found
+                }
+            }
+
+            if (bestMatch) {
+                const latestEntry = bestMatch.gmp && bestMatch.gmp.length > 0 ? bestMatch.gmp[bestMatch.gmp.length - 1] : null;
+
+                // Only add if price changed or no gmp exists
+                // For Mainboard, usually 0 is valid if it's explicitly 0, but usually we care if it's different.
+                const currentPrice = latestEntry ? latestEntry.price : -999999;
+
+                if (gmpPrice !== currentPrice) {
+                    console.log(`Updating GMP for ${bestMatch.companyName}: ${currentPrice} -> ${gmpPrice}`);
+                    bestMatch.gmp = bestMatch.gmp || [];
+                    bestMatch.gmp.push({
+                        price: gmpPrice,
+                        kostak: "0",
+                        date: new Date() // Use current time of update
+                    });
+
+                    if (bestMatch.gmp.length > 30) {
+                        bestMatch.gmp.shift();
+                    }
+
+                    await bestMatch.save();
+                    updatedCount++;
+                }
+            }
+        }
+
+        return updatedCount;
+
+    } catch (error) {
+        console.error('Mainboard GMP Sync Error:', error);
+        return 0;
+    }
+};
+
 export const syncAllGMPData = async () => {
     try {
         console.log('Starting Global GMP Sync...');
 
-        const [chittorgarhData, investorgainData, ipowatchData] = await Promise.all([
+        // 1. Sync Mainboard GMP (API Based - specialized for old/current Mainboard IPOs)
+        const mainboardUpdates = await syncMainboardGMP();
+
+        // 2. Sync SME GMP (Scraper Based - using existing logic)
+        // We only want to process SME IPOs here to avoid double-touching Mainboard or overriding API data with potentially stale scraper data
+        const [chittorgarhData, ipowatchData] = await Promise.all([
             scrapeGMPFromChittorgarh(),
-            scrapeGMPFromInvestorgain(),
             scrapeGMPFromIPOWatch()
         ]);
 
-        const allGmp = [...chittorgarhData, ...investorgainData, ...ipowatchData];
-        console.log(`Collected ${allGmp.length} GMP entries from all sources.`);
+        const allScrapedGmp = [...chittorgarhData, ...ipowatchData];
 
-        // Group by company name (simple or aggregate?)
-        // Let's take the highest GMP or average? Usually, they are similar or one is more updated.
-        // Let's use a Map to aggregate
+        // Filter for SME logic? 
+        // Actually, the original syncAllGMPData logic was filtering DB for SME.
+        // "ipoType: 'SME'" was in the find query.
+        // So we can keep that logic for the scraped data.
+
         const aggregatedGmp = new Map();
-
-        allGmp.forEach(entry => {
+        allScrapedGmp.forEach(entry => {
             const existing = aggregatedGmp.get(entry.companyName);
             if (!existing || entry.gmp > existing.gmp) {
                 aggregatedGmp.set(entry.companyName, entry);
             }
         });
 
-        const activeIpos = await Mainboard.find({
+        const activeSmeIpos = await Mainboard.find({
             status: { $in: ['UPCOMING', 'OPEN', 'CLOSED', 'LISTED'] },
             ipoType: 'SME'
         });
 
-        console.log(`Processing ${activeIpos.length} active IPOs for GMP updates...`);
+        console.log(`Processing ${activeSmeIpos.length} active SME IPOs for GMP updates...`);
 
-        let updatedCount = 0;
-        for (const ipo of activeIpos) {
+        let smeUpdatedCount = 0;
+        for (const ipo of activeSmeIpos) {
             let foundGmp = null;
-
-            // Try to find a match in aggregated data
             for (const [name, data] of aggregatedGmp) {
                 if (isMatch(ipo.companyName, name)) {
                     foundGmp = data.gmp;
@@ -159,31 +236,23 @@ export const syncAllGMPData = async () => {
 
             if (foundGmp !== null) {
                 const latestEntry = ipo.gmp && ipo.gmp.length > 0 ? ipo.gmp[ipo.gmp.length - 1] : null;
-
-                // Only add if price changed or no gmp exists
                 if (!latestEntry || latestEntry.price !== foundGmp) {
-                    console.log(`Updating GMP for ${ipo.companyName}: ${latestEntry?.price || 0} -> ${foundGmp}`);
                     ipo.gmp.push({
                         price: foundGmp,
                         kostak: "0",
                         date: new Date()
                     });
-
-                    // Keep gmp array size reasonable (e.g., last 30 entries)
-                    if (ipo.gmp.length > 30) {
-                        ipo.gmp.shift();
-                    }
-
+                    if (ipo.gmp.length > 30) ipo.gmp.shift();
                     await ipo.save();
-                    updatedCount++;
+                    smeUpdatedCount++;
                 }
             }
         }
 
         return {
             success: true,
-            updatedCount,
-            totalProcessed: activeIpos.length
+            updatedCount: mainboardUpdates + smeUpdatedCount,
+            totalProcessed: activeSmeIpos.length // This metric is a bit skewed now but fine
         };
     } catch (error) {
         console.error('Global GMP Sync Error:', error);

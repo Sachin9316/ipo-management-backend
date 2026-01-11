@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { syncMainboardGMP } from './gmp-scraper.service.js';
 import * as cheerio from 'cheerio';
 import slugify from 'slugify';
 import Mainboard from '../models/mainboard.model.js';
@@ -9,6 +10,8 @@ import { isMatch, parseCurrency, parseIssueSize, roundToTwo, getSimilarity } fro
 // ...
 
 const BASE_URL = 'https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/';
+const DEFAULT_ICON = "https://cdn-icons-png.flaticon.com/512/25/25231.png";
+
 
 // Helper: Parse Date (e.g., "26-Dec" or "December 26, 2025" -> Date object)
 const parseDate = (str) => {
@@ -140,7 +143,7 @@ export const scrapeIPOData = async (limit = 3) => {
                 const ipoData = {
                     companyName: name,
                     slug: slugify(name, { lower: true, strict: true }),
-                    icon: "https://cdn-icons-png.flaticon.com/512/25/25231.png", // Placeholder
+                    icon: DEFAULT_ICON, // Placeholder
                     ipoType: finalIpoType,
                     status: finalStatus,
                     gmp: [{
@@ -216,7 +219,7 @@ const syncIPOData = async (limit, type) => {
         console.log(`Starting ${type} Sync...`);
 
         // 0. Cleanup old data first (Global cleanup is fine)
-        await cleanupOldIPOs();
+        // await cleanupOldIPOs(); // DISABLE CLEANUP: Preserving old IPOs as per user request to see listed ones
 
         let ipowatchIpos = [];
         if (type !== 'SME') {
@@ -319,6 +322,10 @@ const syncIPOData = async (limit, type) => {
                 if (match.registrarName === "N/A" && scraped.registrarName && scraped.registrarName !== "N/A") {
                     match.registrarName = scraped.registrarName;
                 }
+                // Propagate Icon if match has placeholder but scraped has real logo
+                if (match.icon === DEFAULT_ICON && scraped.icon && scraped.icon !== DEFAULT_ICON) {
+                    match.icon = scraped.icon;
+                }
             } else {
                 ipoMap.set(scraped.slug, scraped);
             }
@@ -377,6 +384,10 @@ const syncIPOData = async (limit, type) => {
                 // Trust legacy scraper's type more due to lot price heuristic
                 if (legacy.ipoType === 'SME') match.ipoType = 'SME';
                 if (legacy.link && !match.link) match.link = legacy.link;
+                // Propagate Icon
+                if (match.icon === DEFAULT_ICON && legacy.icon && legacy.icon !== DEFAULT_ICON) {
+                    match.icon = legacy.icon;
+                }
             } else {
                 ipoMap.set(legacy.slug, legacy);
             }
@@ -456,15 +467,51 @@ const syncIPOData = async (limit, type) => {
                         }
                     }
 
-                    const { gmp, ipoType, ...otherData } = ipo;
+                    // Destructure to separate fields we want to check before updating
+                    // PROTECTED FIELDS: companyName, registrarName, ipoType, icon (Manual Management / Anti-Overwrite)
+                    const { gmp, ipoType, registrarName, companyName, subscription, lot_size, lot_price, issueSize, icon, ...otherData } = ipo;
 
                     const updateData = { ...otherData, gmp: existingIPO.gmp };
 
-                    // CRITICAL BUG FIX: Only update ipoType if it's a full sync ('ALL'),
-                    // an SME sync (where we are specifically targeting SMEs),
-                    // or if the existing record doesn't have a valid type yet.
-                    if (type === 'ALL' || type === 'SME' || !existingIPO.ipoType || existingIPO.ipoType === 'N/A') {
-                        updateData.ipoType = ipo.ipoType;
+                    // PROTECT ICON: Don't overwrite a real logo with a placeholder
+                    if (existingIPO.icon && existingIPO.icon !== DEFAULT_ICON) {
+                        // Keep DB icon (Goal: dont update those logos which have the company-image)
+                        updateData.icon = existingIPO.icon;
+                    } else if (icon && icon !== DEFAULT_ICON) {
+                        // Update to new real icon (Goal: if we have default logo ... replace it with chiittorghar company-image)
+                        updateData.icon = icon;
+                    } else {
+                        // Fallback to existing
+                        updateData.icon = existingIPO.icon || DEFAULT_ICON;
+                    }
+
+                    // PRESERVE RICH DATA: Do not overwrite with zeros/empty if we already have data
+                    if (subscription && subscription.total > 0) {
+                        updateData.subscription = subscription;
+                    } else if (existingIPO.subscription && existingIPO.subscription.total > 0) {
+                        updateData.subscription = existingIPO.subscription;
+                    }
+
+                    if (lot_size > 0) updateData.lot_size = lot_size;
+                    else if (existingIPO.lot_size > 0) updateData.lot_size = existingIPO.lot_size;
+
+                    if (lot_price > 0) updateData.lot_price = lot_price;
+                    else if (existingIPO.lot_price > 0) updateData.lot_price = existingIPO.lot_price;
+
+                    if (issueSize && issueSize !== "0.00" && issueSize !== "0") updateData.issueSize = issueSize;
+                    else if (existingIPO.issueSize && existingIPO.issueSize !== "0.00") updateData.issueSize = existingIPO.issueSize;
+
+                    // Only update Registrar if it's missing or N/A in DB
+                    if (!existingIPO.registrarName || existingIPO.registrarName === 'N/A') {
+                        if (registrarName && registrarName !== 'N/A') {
+                            updateData.registrarName = registrarName;
+                        }
+                    }
+
+                    // Only update IPO Type if it's currently invalid/missing in DB
+                    // If user manually set it to SME or MAINBOARD, we respect that.
+                    if (!existingIPO.ipoType || existingIPO.ipoType === 'N/A') {
+                        updateData.ipoType = ipoType;
                     }
 
                     await Mainboard.updateOne({ slug: ipo.slug }, { $set: updateData });
@@ -490,10 +537,21 @@ export const scrapeAndSaveIPOData = async (limit = 3) => {
 };
 
 export const scrapeAndSaveMainboardIPOs = async (limit = 3) => {
-    return await syncIPOData(limit, 'MAINBOARD');
+    // 1. Fetch rich data from Chittorgarh (Main Source)
+    console.log("Step 1: Fetching detailed Mainboard IPO data from Chittorgarh...");
+    const result = await syncIPOData(limit, 'MAINBOARD');
+
+    // 2. Fetch/Update GMP from the new InvestorGain API (Source of Truth for GMP)
+    try {
+        console.log("Step 2: Updating Mainboard GMP from InvestorGain API...");
+        await syncMainboardGMP();
+    } catch (gmpError) {
+        console.error("Warning: InvestorGain GMP Update Failed:", gmpError.message);
+    }
+
+    return result;
 };
 
 export const scrapeAndSaveSmeIPOs = async (limit = 100) => {
     return await syncIPOData(limit, 'SME');
 };
-
