@@ -99,6 +99,13 @@ export const getAllMainboards = async (req, res) => {
                 { bse_code_nse_code: searchRegex }
             ];
         }
+        // Archiving Filter (Default: Hide Archived)
+        if (req.query.archived === 'true') {
+            filter.isArchived = true;
+        } else {
+            filter.isArchived = { $ne: true };
+        }
+
         console.log("Applied Filter:", filter);
 
         const mainboards = await Mainboard.find(filter)
@@ -109,10 +116,17 @@ export const getAllMainboards = async (req, res) => {
         const total = await Mainboard.countDocuments(filter);
         const totalPages = Math.ceil(total / limit);
 
+        const iposWithProfit = mainboards.map(ipo => {
+            const ipoObj = ipo.toObject();
+            const latestGmp = ipo.gmp && ipo.gmp.length > 0 ? ipo.gmp[ipo.gmp.length - 1].price : 0;
+            ipoObj.est_profit = latestGmp * (ipo.lot_size || 0);
+            return ipoObj;
+        });
+
         res.status(200).json({
             success: true,
             message: "Mainboards fetched successfully",
-            data: mainboards,
+            data: iposWithProfit,
             pagination: {
                 currentPage: page,
                 totalPages,

@@ -64,7 +64,8 @@ const mainboardSchema = new mongoose.Schema({
         listing_gain: { type: Number, set: setTwoDecimal },
         day_high: { type: Number, set: setTwoDecimal },
         day_low: { type: Number, set: setTwoDecimal }
-    }
+    },
+    isArchived: { type: Boolean, default: false }
 }, {
     timestamps: true,
 });

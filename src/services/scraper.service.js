@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { syncMainboardGMP } from './gmp-scraper.service.js';
+import { fetchInvestorGainGMP } from './investorgain.service.js';
 import * as cheerio from 'cheerio';
 import slugify from 'slugify';
 import Mainboard from '../models/mainboard.model.js';
@@ -33,6 +34,10 @@ const calculateStatus = (open, close, listing) => {
 
 export const scrapeIPOData = async (limit = 3) => {
     try {
+        // Fetch High-Quality Data from InvestorGain
+        const investorGainData = await fetchInvestorGainGMP();
+        const investorGainMap = new Map(investorGainData.map(item => [item.slug, item]));
+
         console.log(`Fetching GMP list from ${BASE_URL}...`);
         const { data: listHtml } = await axios.get(BASE_URL, {
             headers: {
@@ -62,7 +67,7 @@ export const scrapeIPOData = async (limit = 3) => {
 
             if (!name || !link) continue;
 
-            const gmpVal = parseCurrency(gmpStr);
+            let gmpVal = parseCurrency(gmpStr);
             console.log(`Scraping details for ${name} from ${link}...`);
 
             // Fetch Detail Page
@@ -98,11 +103,11 @@ export const scrapeIPOData = async (limit = 3) => {
 
                 // Extract Dates
                 // Trying specific labels seen in inspection
-                const openDate = parseDate(getTableValue('IPO Open Date'));
-                const closeDate = parseDate(getTableValue('IPO Close Date'));
-                const listingDate = parseDate(getTableValue('IPO Listing Date') || getTableValue('Listing Date'));
-                const allotmentDate = parseDate(getTableValue('Basis of Allotment'));
-                const refundDate = parseDate(getTableValue('Refunds')); // "Refunds:"
+                let openDate = parseDate(getTableValue('IPO Open Date'));
+                let closeDate = parseDate(getTableValue('IPO Close Date'));
+                let listingDate = parseDate(getTableValue('IPO Listing Date') || getTableValue('Listing Date'));
+                let allotmentDate = parseDate(getTableValue('Basis of Allotment'));
+                let refundDate = parseDate(getTableValue('Refunds')); // "Refunds:"
 
                 // Prospectus Links
                 const drhpLink = getTableLink('DRHP Draft Prospectus');
@@ -127,18 +132,50 @@ export const scrapeIPOData = async (limit = 3) => {
                 const cleanPriceRange = priceRange.replace(/,/g, '');
                 // Match numbers, handle "to" with optional symbols in between
                 const priceMatch = cleanPriceRange.match(/(\d+(?:\.\d+)?)(?:\s*to\s*[^\d]*(\d+(?:\.\d+)?))?/);
-                const minPrice = priceMatch ? parseFloat(priceMatch[1]) : parseCurrency(priceStr);
-                const maxPrice = priceMatch && priceMatch[2] ? parseFloat(priceMatch[2]) : minPrice;
+                let minPrice = priceMatch ? parseFloat(priceMatch[1]) : parseCurrency(priceStr);
+                let maxPrice = priceMatch && priceMatch[2] ? parseFloat(priceMatch[2]) : minPrice;
 
                 // Registrar
                 const registrarName = getTableValue('Registrar') || "N/A";
 
-                const finalStatus = calculateStatus(openDate, closeDate, listingDate);
-
                 // Robust SME Detection: If Lot Price > 50,000, it's an SME (Mainboard is ~15k)
                 const calculatedLotPrice = (lotShares || 0) * maxPrice;
                 const isSMEHeuristic = calculatedLotPrice > 50000;
-                const finalIpoType = (typeStr.toUpperCase().includes("SME") || isSMEHeuristic) ? "SME" : "MAINBOARD";
+                let finalIpoType = (typeStr.toUpperCase().includes("SME") || isSMEHeuristic) ? "SME" : "MAINBOARD";
+
+                const slug = slugify(name, { lower: true, strict: true });
+
+                // --- INTEGRATION: InvestorGain Data ---
+                let igMatch = null;
+                // 1. Try exact slug match
+                if (investorGainMap.has(slug)) {
+                    igMatch = investorGainMap.get(slug);
+                } else {
+                    // 2. Try fuzzy match
+                    let bestScore = 0;
+                    for (const item of investorGainData) {
+                        const score = getSimilarity(name, item.companyName);
+                        if (score > 0.8 && score > bestScore) { // High threshold for safety
+                            bestScore = score;
+                            igMatch = item;
+                        }
+                    }
+                }
+
+                if (igMatch) {
+                    console.log(`✅ Matched with InvestorGain: ${name} -> ${igMatch.companyName} (GMP: ₹${igMatch.price})`);
+                    // Override critical data with high-quality API data
+                    // Only override if valid data exists in IG match
+                    if (typeof igMatch.price === 'number') gmpVal = igMatch.price;
+                    if (igMatch.openDate) openDate = igMatch.openDate;
+                    if (igMatch.closeDate) closeDate = igMatch.closeDate;
+                    if (igMatch.listingDate) listingDate = igMatch.listingDate;
+                    if (igMatch.ipoType) finalIpoType = igMatch.ipoType;
+                    // Percentage is available in igMatch.gmp_percentage if needed
+                }
+                // --------------------------------------
+
+                const finalStatus = calculateStatus(openDate, closeDate, listingDate);
 
                 const ipoData = {
                     companyName: name,
@@ -196,19 +233,24 @@ import { scrapeChittorgarhIPOs, fetchChittorgarhAPIData, stripHtml } from './chi
 
 
 // Helper: Cleanup old IPOs
-export const cleanupOldIPOs = async () => {
+// Helper: Archive old IPOs (Soft Delete)
+export const archiveOldIPOs = async () => {
     try {
         const cutoffDate = new Date();
         cutoffDate.setDate(cutoffDate.getDate() - 30); // 30 days ago
 
-        const result = await Mainboard.deleteMany({
-            close_date: { $lt: cutoffDate }
-        });
+        const result = await Mainboard.updateMany(
+            {
+                listing_date: { $lt: cutoffDate },
+                isArchived: { $ne: true }
+            },
+            { $set: { isArchived: true } }
+        );
 
-        console.log(`Cleanup: Deleted ${result.deletedCount} old IPOs (closed before ${cutoffDate.toISOString().split('T')[0]}).`);
-        return result.deletedCount;
+        console.log(`Cleanup: Archived ${result.modifiedCount} old IPOs (listed before ${cutoffDate.toISOString().split('T')[0]}).`);
+        return result.modifiedCount;
     } catch (error) {
-        console.error('Error cleaning up old IPOs:', error);
+        console.error('Error archiving old IPOs:', error);
         return 0;
     }
 };
@@ -219,7 +261,8 @@ const syncIPOData = async (limit, type) => {
         console.log(`Starting ${type} Sync...`);
 
         // 0. Cleanup old data first (Global cleanup is fine)
-        // await cleanupOldIPOs(); // DISABLE CLEANUP: Preserving old IPOs as per user request to see listed ones
+        // 0. Archive old data first
+        await archiveOldIPOs();
 
         let ipowatchIpos = [];
         if (type !== 'SME') {
@@ -469,20 +512,17 @@ const syncIPOData = async (limit, type) => {
 
                     // Destructure to separate fields we want to check before updating
                     // PROTECTED FIELDS: companyName, registrarName, ipoType, icon (Manual Management / Anti-Overwrite)
-                    const { gmp, ipoType, registrarName, companyName, subscription, lot_size, lot_price, issueSize, icon, ...otherData } = ipo;
+                    const { gmp, ipoType, registrarName, companyName, subscription, lot_size, lot_price, issueSize, icon, listing_info, ...otherData } = ipo;
 
                     const updateData = { ...otherData, gmp: existingIPO.gmp };
 
-                    // PROTECT ICON: Don't overwrite a real logo with a placeholder
-                    if (existingIPO.icon && existingIPO.icon !== DEFAULT_ICON) {
-                        // Keep DB icon (Goal: dont update those logos which have the company-image)
-                        updateData.icon = existingIPO.icon;
-                    } else if (icon && icon !== DEFAULT_ICON) {
-                        // Update to new real icon (Goal: if we have default logo ... replace it with chiittorghar company-image)
+                    // ICON STRATEGY: Trust the incoming scraper/API data first if it's a real logo.
+                    if (icon && icon !== DEFAULT_ICON) {
                         updateData.icon = icon;
+                    } else if (existingIPO.icon && existingIPO.icon !== DEFAULT_ICON) {
+                        updateData.icon = existingIPO.icon;
                     } else {
-                        // Fallback to existing
-                        updateData.icon = existingIPO.icon || DEFAULT_ICON;
+                        updateData.icon = DEFAULT_ICON;
                     }
 
                     // PRESERVE RICH DATA: Do not overwrite with zeros/empty if we already have data
@@ -490,6 +530,13 @@ const syncIPOData = async (limit, type) => {
                         updateData.subscription = subscription;
                     } else if (existingIPO.subscription && existingIPO.subscription.total > 0) {
                         updateData.subscription = existingIPO.subscription;
+                    }
+
+                    // Handling Listing Info (New)
+                    if (listing_info && (listing_info.listing_price > 0 || listing_info.listing_gain > 0)) {
+                        updateData.listing_info = listing_info;
+                    } else if (existingIPO.listing_info && (existingIPO.listing_info.listing_price > 0 || existingIPO.listing_info.listing_gain > 0)) {
+                        updateData.listing_info = existingIPO.listing_info;
                     }
 
                     if (lot_size > 0) updateData.lot_size = lot_size;

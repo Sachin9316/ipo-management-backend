@@ -171,7 +171,7 @@ export const scrapeChittorgarhDetail = async (ipoObj) => {
         allotmentDate: null,
         refundDate: null,
         listingDate: null,
-        scrapedLogo: null // New field for logo from detail page
+        listingDate: null
     };
 
     try {
@@ -185,33 +185,8 @@ export const scrapeChittorgarhDetail = async (ipoObj) => {
         const dataMap = new Map();
         const linksMap = new Map();
 
-        // 0. Extract Logo (New)
-        // Try to find the image in the "Company Logo" value or nearby
-        // Often it's in a div with class 'dt-logo' or similar, or just the first image in the main content area that isn't the site logo.
-        // Chittorgarh usually puts the logo in a table or a specific div.
-        // Let's rely on standard content images first, skipping known site elements.
-        const logoImg = $('.content-box img[src*="logo"], .table-responsive img, img[alt*="Gujarat Kidney"]').not('.site-logo img').first();
-
-        // Fallback: Check if there's an image in the same row/table as "Company Name" or Header
-        let src = null;
-        if (logoImg.length > 0) src = logoImg.attr('src');
-
-        if (!src) {
-            // Try searching specifically for logo files in the main content
-            const possibleLogos = $('img').filter((i, el) => {
-                const s = $(el).attr('src') || '';
-                const alt = $(el).attr('alt') || '';
-                return (s.toLowerCase().includes('logo') || alt.toLowerCase().includes('logo')) &&
-                    !s.includes('chittorgarh-logo') &&
-                    !s.includes('site-logo');
-            });
-            if (possibleLogos.length > 0) src = possibleLogos.first().attr('src');
-        }
-
-        if (src) {
-            if (src.startsWith('/')) src = `https://www.chittorgarh.com${src}`;
-            details.scrapedLogo = src;
-        }
+        // 0. Extract Logo (Removed: using API response per user request)
+        // Logo is strictly taken from the 'listIcon' (API field) in the main loop.
 
         // 1. Universal Table Scraper
         $('table').each((i, table) => {
@@ -241,7 +216,8 @@ export const scrapeChittorgarhDetail = async (ipoObj) => {
         // 2. Extract Data
         const priceRange = getVal(['price band', 'issue price', 'price']);
         const lotSizeStr = getVal(['lot size', 'minimum order quantity', 'market lot']);
-        details.lotSize = lotSizeStr ? parseInt(lotSizeStr.replace(/[^0-9]/g, '')) : 0;
+        // Fix: Handle "1,600 Shares" format
+        details.lotSize = lotSizeStr ? parseInt(lotSizeStr.replace(/,/g, '').replace(/\D/g, '')) : 0;
 
         // Price Calculation
         if (priceRange) {
@@ -262,6 +238,17 @@ export const scrapeChittorgarhDetail = async (ipoObj) => {
         details.allotmentDate = parseDate(getVal(['allotment', 'basis of allotment']));
         details.refundDate = parseDate(getVal(['refunds', 'initiation of refunds']));
         details.listingDate = parseDate(getVal(['listing date']));
+
+        // Listing Data Extraction (New)
+        const parseCurrencyLocal = (val) => {
+            if (!val) return 0;
+            return parseFloat(val.replace(/[^\d.]/g, '')) || 0;
+        };
+
+        details.listingOpen = parseCurrencyLocal(getVal(['open', 'listing price']));
+        details.listingHigh = parseCurrencyLocal(getVal(['high', 'day high']));
+        details.listingLow = parseCurrencyLocal(getVal(['low', 'day low']));
+        details.listingClose = parseCurrencyLocal(getVal(['close', 'last', 'market close']));
 
         return details;
 
@@ -314,10 +301,23 @@ export const scrapeChittorgarhIPOs = async (limit = 5, type = 'ALL') => {
         // Fix Icon URL from List if relative
         let listIcon = item['~compare_image'] || "";
         if (listIcon && listIcon.startsWith('/')) {
-            listIcon = `https://www.chittorgarh.com${listIcon}`;
+            listIcon = `https://www.chittorgarh.net${listIcon}`;
         }
 
-        const finalIcon = detail.scrapedLogo || listIcon || "https://cdn-icons-png.flaticon.com/512/25/25231.png";
+        const finalIcon = listIcon || "https://cdn-icons-png.flaticon.com/512/25/25231.png";
+
+        // Listing Gain Calculation
+        // Use listingOpen as the primary "Listing Price"
+        const finalIssuePrice = detail.maxPrice > 0 ? detail.maxPrice : (parseFloat(item['Issue Price (Rs.)']) || 0);
+        let listingPrice = detail.listingOpen || 0;
+
+        let listingGain = 0;
+        let listingGainPercent = 0;
+
+        if (listingPrice > 0 && finalIssuePrice > 0) {
+            listingGain = listingPrice - finalIssuePrice;
+            listingGainPercent = (listingGain / finalIssuePrice) * 100;
+        }
 
         const ipoData = {
             companyName: name,
@@ -345,13 +345,22 @@ export const scrapeChittorgarhIPOs = async (limit = 5, type = 'ALL') => {
             registrarName: detail.registrar || "N/A",
             registrarLink: detail.registrarLink || "",
             lot_size: detail.lotSize,
-            lot_price: detail.lotPrice || (detail.lotSize * detail.maxPrice),
+            lot_price: detail.lotPrice || (detail.lotSize * finalIssuePrice),
             min_price: detail.minPrice > 0 ? detail.minPrice : (parseFloat(item['Issue Price (Rs.)']) || 0),
-            max_price: detail.maxPrice > 0 ? detail.maxPrice : (parseFloat(item['Issue Price (Rs.)']) || 0),
+            max_price: finalIssuePrice,
             isAllotmentOut: false,
             drhp_pdf: detail.drhp || "",
             rhp_pdf: detail.rhp || "",
             link: detail.link,
+            // Enhanced Listing Info
+            listing_info: {
+                listing_price: listingPrice,
+                listing_gain: roundToTwo(listingGain),
+                listing_gain_percent: roundToTwo(listingGainPercent),
+                day_high: detail.listingHigh || 0,
+                day_low: detail.listingLow || 0,
+                market_close: detail.listingClose || 0
+            },
             allotment_date: detail.allotmentDate || (closeDate ? new Date(closeDate.getTime() + 3 * 24 * 60 * 60 * 1000) : null),
             refund_date: detail.refundDate || (closeDate ? new Date(closeDate.getTime() + 4 * 24 * 60 * 60 * 1000) : null),
             listing_date: detail.listingDate || rListingDate || (closeDate ? new Date(closeDate.getTime() + 6 * 24 * 60 * 60 * 1000) : null),

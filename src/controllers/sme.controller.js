@@ -88,6 +88,17 @@ export const getAllSMEIPOs = async (req, res) => {
                 { companyName: searchRegex },
                 { bse_code_nse_code: searchRegex }
             ];
+            filter.$or = [
+                { companyName: searchRegex },
+                { bse_code_nse_code: searchRegex }
+            ];
+        }
+
+        // Archiving Filter (Default: Hide Archived)
+        if (req.query.archived === 'true') {
+            filter.isArchived = true;
+        } else {
+            filter.isArchived = { $ne: true };
         }
 
         const smeIPOs = await Mainboard.find(filter)
@@ -98,10 +109,17 @@ export const getAllSMEIPOs = async (req, res) => {
         const total = await Mainboard.countDocuments(filter);
         const totalPages = Math.ceil(total / limit);
 
+        const iposWithProfit = smeIPOs.map(ipo => {
+            const ipoObj = ipo.toObject();
+            const latestGmp = ipo.gmp && ipo.gmp.length > 0 ? ipo.gmp[ipo.gmp.length - 1].price : 0;
+            ipoObj.est_profit = latestGmp * (ipo.lot_size || 0);
+            return ipoObj;
+        });
+
         res.status(200).json({
             success: true,
             message: "SME IPOs fetched successfully",
-            data: smeIPOs,
+            data: iposWithProfit,
             pagination: {
                 currentPage: page,
                 totalPages,
@@ -121,10 +139,14 @@ export const getSMEIPOById = async (req, res) => {
         if (!smeIPO) {
             return res.status(404).json({ message: "SME IPO not found" });
         }
+        const ipoObj = smeIPO.toObject();
+        const latestGmp = smeIPO.gmp && smeIPO.gmp.length > 0 ? smeIPO.gmp[smeIPO.gmp.length - 1].price : 0;
+        ipoObj.est_profit = latestGmp * (smeIPO.lot_size || 0);
+
         res.status(200).json({
             success: true,
             message: "SME IPO fetched successfully",
-            data: smeIPO
+            data: ipoObj
         });
     }
     catch (error) {

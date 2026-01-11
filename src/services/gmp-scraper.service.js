@@ -1,7 +1,8 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import Mainboard from '../models/mainboard.model.js';
-import { isMatch, parseCurrency } from '../utils/matching.js';
+import { isMatch, parseCurrency, getSimilarity, isSubsetMatch } from '../utils/matching.js';
+import { fetchInvestorGainGMP } from './investorgain.service.js';
 
 const CHITTORGARH_GMP_URL = 'https://www.chittorgarh.com/report/ipo-grey-market-premium-gmp/218/';
 const INVESTORGAIN_GMP_URL = 'https://www.investorgain.com/report/live-ipo-gmp/331/';
@@ -115,17 +116,18 @@ export const scrapeGMPFromIPOWatch = async () => {
 
 export const syncMainboardGMP = async () => {
     try {
-        console.log('Fetching Mainboard GMP from InvestorGain API...');
-        const { data } = await axios.get('https://webnodejs.investorgain.com/cloud/ipodashboard/ipo-gmp-performance-read/IPO', { headers: HEADERS });
+        console.log('Fetching GMP data from InvestorGain API (New Endpoint)...');
+        const ipoList = await fetchInvestorGainGMP();
 
-        if (!data || !data.ipoList) {
-            console.error('Invalid response from InvestorGain API');
+        if (!ipoList || ipoList.length === 0) {
+            console.error('No data returned from InvestorGain API');
             return 0;
         }
 
-        const ipoList = data.ipoList;
-        console.log(`Fetched ${ipoList.length} Mainboard GMP entries.`);
+        console.log(`Fetched ${ipoList.length} GMP entries (Mainboard & SME).`);
 
+        // only fetch MAINBOARD for this specific function?
+        // existing logic was just MAINBOARD.
         const activeIpos = await Mainboard.find({
             ipoType: 'MAINBOARD'
         });
@@ -135,30 +137,42 @@ export const syncMainboardGMP = async () => {
         let updatedCount = 0;
 
         for (const item of ipoList) {
-            const companyName = item.company_short_name;
-            const gmpPrice = parseFloat(item.gmp) || 0;
+            // New service returns normalized object: { companyName, price, ... }
+            if (item.ipoType !== 'MAINBOARD') continue; // Enforce Mainboard only for this function
+
+            const companyName = item.companyName;
+            const gmpPrice = item.price; // Already parsed number
 
             // Find matching IPO in DB
-            // We'll prioritize exact match on slug if we had it, but we only have name here
-            // So we use our similarity matcher
             let bestMatch = null;
-            let bestScore = 0;
 
+            // 1. Try Slug Match if possible (DB has slug, item has slug)
             for (const ipo of activeIpos) {
-                const score = isMatch(ipo.companyName, companyName) ? 1.0 : 0; // Use isMatch helper which handles slugify comparison
-                // Or better, use getSimilarity from elsewhere if imported, but isMatch is imported.
-                // wait, isMatch returns boolean. 
-                if (score) {
+                if (ipo.slug === item.slug) {
                     bestMatch = ipo;
-                    break; // Exact-ish match found
+                    break;
+                }
+            }
+
+            // 2. Fallback to Fuzzy Match
+            if (!bestMatch) {
+                let bestScore = 0;
+                for (const ipo of activeIpos) {
+                    const score = getSimilarity(ipo.companyName, companyName);
+                    const isSubset = isSubsetMatch(ipo.companyName, companyName);
+
+                    // Boost score if subset match found (very reliable)
+                    const finalScore = isSubset ? 0.99 : score;
+
+                    if (finalScore > 0.6 && finalScore > bestScore) {
+                        bestScore = finalScore;
+                        bestMatch = ipo;
+                    }
                 }
             }
 
             if (bestMatch) {
                 const latestEntry = bestMatch.gmp && bestMatch.gmp.length > 0 ? bestMatch.gmp[bestMatch.gmp.length - 1] : null;
-
-                // Only add if price changed or no gmp exists
-                // For Mainboard, usually 0 is valid if it's explicitly 0, but usually we care if it's different.
                 const currentPrice = latestEntry ? latestEntry.price : -999999;
 
                 if (gmpPrice !== currentPrice) {
@@ -167,7 +181,7 @@ export const syncMainboardGMP = async () => {
                     bestMatch.gmp.push({
                         price: gmpPrice,
                         kostak: "0",
-                        date: new Date() // Use current time of update
+                        date: new Date()
                     });
 
                     if (bestMatch.gmp.length > 30) {

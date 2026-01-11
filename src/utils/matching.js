@@ -8,7 +8,7 @@ export const isMatch = (name1, name2) => {
 /**
  * Tokenize string: lowercase, remove special chars, remove stopwords
  */
-const getTokens = (str) => {
+export const getTokens = (str) => {
     if (!str) return [];
     return str.toLowerCase()
         .replace(/[^a-z0-9\s]/g, '') // remove special chars
@@ -30,6 +30,22 @@ export const getSimilarity = (name1, name2) => {
     const union = new Set([...tokens1, ...tokens2]);
 
     return intersection.size / union.size;
+};
+
+export const isSubsetMatch = (name1, name2) => {
+    const t1 = getTokens(name1);
+    const t2 = getTokens(name2);
+    if (t1.length === 0 || t2.length === 0) return false;
+
+    const s1 = new Set(t1);
+    const s2 = new Set(t2);
+
+    // Check if s1 is subset of s2
+    const isS1Subset = t1.every(token => s2.has(token));
+    // Check if s2 is subset of s1
+    const isS2Subset = t2.every(token => s1.has(token));
+
+    return isS1Subset || isS2Subset;
 };
 
 // Helper: Clean currency strings (e.g., "₹ 12,000" -> 12000)
