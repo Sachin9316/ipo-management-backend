@@ -1,4 +1,6 @@
 import Mainboard from "../models/mainboard.model.js";
+import User from "../models/User.model.js";
+import { sendEmail } from "../utils/sendEmail.js";
 import { serverErrorHandler } from "../utils/serverErrorHandling.js";
 
 import cloudinary from "../config/cloudinary.js";
@@ -46,6 +48,82 @@ export const createMainboard = async (req, res) => {
 
         const newMainboard = new Mainboard(mainboardData);
         await newMainboard.save();
+
+        // ---------------------------------------------------------
+        // SEND EMAIL NOTIFICATION (Fire & Forget)
+        // ---------------------------------------------------------
+        (async () => {
+            try {
+                // Find users who opted in
+                const subscribedUsers = await User.find({ "emailPreferences.newIpo": true }).select("email name");
+
+                if (subscribedUsers.length > 0) {
+                    const subject = `New IPO Alert: ${newMainboard.companyName}`;
+                    const html = `
+                        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; background-color: #ffffff;">
+                            <div style="background-color: #6200EE; padding: 20px; text-align: center; color: white;">
+                                <h1 style="margin: 0; font-size: 24px;">New IPO Alert</h1>
+                            </div>
+                            <div style="padding: 20px;">
+                                <div style="text-align: center; margin-bottom: 20px;">
+                                    ${newMainboard.icon
+                            ? `<img src="${newMainboard.icon}" alt="${newMainboard.companyName} Logo" style="width: 80px; height: 80px; object-fit: contain; border-radius: 50%; border: 2px solid #eee; background-color: #fff;">`
+                            : `<div style="width: 80px; height: 80px; border-radius: 50%; background-color: #f0f0f0; margin: 0 auto; display: flex; align-items: center; justify-content: center; font-size: 30px; color: #999;">🏢</div>`
+                        }
+                                    <h2 style="margin-top: 15px; margin-bottom: 5px; color: #333;">${newMainboard.companyName}</h2>
+                                    <span style="background-color: #e3f2fd; color: #1565c0; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; display: inline-block;">MAINBOARD IPO</span>
+                                </div>
+                                
+                                <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
+                                    <tr style="border-bottom: 1px solid #f0f0f0;">
+                                        <td style="padding: 12px 0; color: #666; font-size: 14px;">Open Date</td>
+                                        <td style="padding: 12px 0; text-align: right; font-weight: 600; color: #333;">${newMainboard.open_date ? new Date(newMainboard.open_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'N/A'}</td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid #f0f0f0;">
+                                        <td style="padding: 12px 0; color: #666; font-size: 14px;">Close Date</td>
+                                        <td style="padding: 12px 0; text-align: right; font-weight: 600; color: #333;">${newMainboard.close_date ? new Date(newMainboard.close_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'N/A'}</td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid #f0f0f0;">
+                                        <td style="padding: 12px 0; color: #666; font-size: 14px;">Price Band</td>
+                                        <td style="padding: 12px 0; text-align: right; font-weight: 600; color: #333;">
+                                            ${(newMainboard.min_price && newMainboard.max_price)
+                            ? `₹${newMainboard.min_price} - ₹${newMainboard.max_price}`
+                            : (newMainboard.max_price ? `₹${newMainboard.max_price}` : 'N/A')}
+                                        </td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid #f0f0f0;">
+                                        <td style="padding: 12px 0; color: #666; font-size: 14px;">Lot Size</td>
+                                        <td style="padding: 12px 0; text-align: right; font-weight: 600; color: #333;">${newMainboard.lot_size} Shares</td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid #f0f0f0;">
+                                        <td style="padding: 12px 0; color: #666; font-size: 14px;">Issue Size</td>
+                                        <td style="padding: 12px 0; text-align: right; font-weight: 600; color: #333;">${newMainboard.issueSize || 'N/A'}</td>
+                                    </tr>
+                                </table>
+
+
+                            </div>
+                            <div style="background-color: #f9fafb; padding: 20px; text-align: center; font-size: 12px; color: #9ca3af; border-top: 1px solid #e5e7eb;">
+                                <p style="margin: 0 0 10px 0;">You received this email because you subscribed to IPO alerts on IPO Wizard.</p>
+                                <p style="margin: 0;">&copy; ${new Date().getFullYear()} IPO Wizard. All rights reserved.</p>
+                            </div>
+                        </div>
+                    `;
+
+                    // Send individually (or use BCC if list is huge, but individual is better for personalization if needed)
+                    // For now, simple loop
+                    for (const user of subscribedUsers) {
+                        try {
+                            await sendEmail(user.email, subject, `New IPO: ${newMainboard.companyName}`, html);
+                        } catch (err) {
+                            console.error(`Failed to email ${user.email}`, err);
+                        }
+                    }
+                }
+            } catch (emailErr) {
+                console.error("Error in email notification process:", emailErr);
+            }
+        })();
 
         return res.status(201).json({
             success: true,

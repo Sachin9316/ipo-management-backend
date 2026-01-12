@@ -1,0 +1,46 @@
+﻿Fetching from https://webnodejs.chittorgarh.com/cloud/report/data-read/82/1/1/2026/2025-26/0/all/0?search=&v=16-05...
+Found 11 records.
+1. Company: Armour Security India Ltd. IPO
+   Listing at: "NSE SME"
+   Detected Type: SME
+---
+2. Company: GRE Renew Enertech Ltd. IPO
+   Listing at: "BSE SME"
+   Detected Type: SME
+---
+3. Company: Amagi Media Labs Ltd. IPO
+   Listing at: "BSE, NSE"
+   Detected Type: MAINBOARD
+---
+4. Company: INDO SMC Ltd IPO
+   Listing at: "BSE SME"
+   Detected Type: SME
+---
+5. Company: Narmadesh Brass Industries Ltd. IPO
+   Listing at: "BSE SME"
+   Detected Type: SME
+---
+6. Company: Avana Electrosystems Ltd. IPO
+   Listing at: "NSE SME"
+   Detected Type: SME
+---
+7. Company: Bharat Coking Coal Ltd. IPO O
+   Listing at: "BSE, NSE"
+   Detected Type: MAINBOARD
+---
+8. Company: Defrail Technologies Ltd. IPO O
+   Listing at: "BSE SME"
+   Detected Type: SME
+---
+9. Company: Yajur Fibres Ltd. IPO P
+   Listing at: "BSE SME"
+   Detected Type: SME
+---
+10. Company: Victory Electric Vehicles International Ltd. IPO P
+   Listing at: "NSE SME"
+   Detected Type: SME
+---
+11. Company: Gabion Technologies India Ltd. IPO P
+   Listing at: "BSE SME"
+   Detected Type: SME
+---

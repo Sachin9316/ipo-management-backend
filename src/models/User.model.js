@@ -67,7 +67,11 @@ const userSchema = new mongoose.Schema(
         documentUrl: { type: String }, // Link to uploaded image/pdf
       }
     ],
-    watchlist: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Mainboard' }]
+    watchlist: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Mainboard' }],
+    emailPreferences: {
+      newIpo: { type: Boolean, default: false },
+      gmpUpdate: { type: Boolean, default: false }
+    }
   },
   { timestamps: true }
 );

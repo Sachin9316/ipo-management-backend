@@ -13,7 +13,50 @@ export const getUserProfile = async (req, res) => {
                 email: user.email,
                 role: user.role,
                 panDocuments: user.panDocuments,
-                watchlist: user.watchlist
+                watchlist: user.watchlist,
+                emailPreferences: user.emailPreferences
+            });
+        } else {
+            res.status(404).json({ message: "User not found" });
+        }
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
+
+// @desc    Update user profile
+// @route   PUT /api/users/profile
+// @access  Private
+export const updateUserProfile = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id);
+
+        if (user) {
+            user.name = req.body.name || user.name;
+            user.email = req.body.email || user.email;
+            user.phoneNumber = req.body.phoneNumber || user.phoneNumber;
+
+            if (req.body.password) {
+                user.password = req.body.password; // Assuming pre-save hook handles hashing
+            }
+
+            if (req.body.emailPreferences) {
+                user.emailPreferences = req.body.emailPreferences;
+            }
+
+            const updatedUser = await user.save();
+
+            res.json({
+                _id: updatedUser._id,
+                name: updatedUser.name,
+                email: updatedUser.email,
+                role: updatedUser.role,
+                phoneNumber: updatedUser.phoneNumber,
+                emailPreferences: updatedUser.emailPreferences,
+                panDocuments: updatedUser.panDocuments,
+                watchlist: updatedUser.watchlist,
+                token: generateToken(updatedUser._id), // If you want to refresh token on update
             });
         } else {
             res.status(404).json({ message: "User not found" });

@@ -89,6 +89,7 @@ export const loginUser = async (req, res) => {
                 email: user.email,
                 role: user.role,
                 isVerified: user.isVerified,
+                emailPreferences: user.emailPreferences,
                 token: generateToken(user._id),
             });
         } else {
@@ -185,7 +186,14 @@ export const adminPing = async (req, res) => {
 export const getMe = async (req, res) => {
     try {
         const user = await User.findById(req.user._id).select("-password -otp -otpExpires");
-        res.json(user);
+        if (user) {
+            // Explicitly return fields or just return user object (which now has emailPreferences)
+            // returning user object is safer as .select() removed sensitive fields.
+            // but let's be explicit if needed or just res.json(user) as before
+            res.json(user);
+        } else {
+            res.status(404).json({ message: "User not found" });
+        }
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Server Error" });
@@ -233,6 +241,20 @@ export const updateProfile = async (req, res) => {
                 }
             }
 
+            // Handle Email Preferences
+            if (req.body.emailPreferences) {
+                // If sent as string (multipart/form-data), parse it
+                if (typeof req.body.emailPreferences === 'string') {
+                    try {
+                        user.emailPreferences = JSON.parse(req.body.emailPreferences);
+                    } catch (e) {
+                        console.error("Failed to parse emailPreferences", e);
+                    }
+                } else {
+                    user.emailPreferences = req.body.emailPreferences;
+                }
+            }
+
             const updatedUser = await user.save();
 
             res.json({
@@ -242,6 +264,7 @@ export const updateProfile = async (req, res) => {
                 role: updatedUser.role,
                 isVerified: updatedUser.isVerified,
                 profileImage: updatedUser.profileImage,
+                emailPreferences: updatedUser.emailPreferences,
             });
         } else {
             res.status(404).json({ message: "User not found" });
