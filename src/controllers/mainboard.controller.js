@@ -54,8 +54,8 @@ export const createMainboard = async (req, res) => {
         // ---------------------------------------------------------
         (async () => {
             try {
-                // Find users who opted in
-                const subscribedUsers = await User.find({ "emailPreferences.newIpo": true }).select("email name");
+                // Find users who opted in AND are superadmin
+                const subscribedUsers = await User.find({ "emailPreferences.newIpo": true, role: 'superadmin' }).select("email name");
 
                 if (subscribedUsers.length > 0) {
                     const subject = `New IPO Alert: ${newMainboard.companyName}`;

@@ -173,24 +173,44 @@ export const syncMainboardGMP = async () => {
             }
 
             if (bestMatch) {
-                const latestEntry = bestMatch.gmp && bestMatch.gmp.length > 0 ? bestMatch.gmp[bestMatch.gmp.length - 1] : null;
-                const currentPrice = latestEntry ? latestEntry.price : -999999;
+                const todayStr = new Date().toDateString();
 
-                if (gmpPrice !== currentPrice) {
-                    console.log(`Updating GMP for ${bestMatch.companyName}: ${currentPrice} -> ${gmpPrice}`);
-                    bestMatch.gmp = bestMatch.gmp || [];
-                    bestMatch.gmp.push({
-                        price: gmpPrice,
-                        kostak: "0",
-                        date: new Date()
-                    });
+                // Find if we already have an entry for today
+                const existingEntryIndex = bestMatch.gmp.findIndex(entry =>
+                    new Date(entry.date).toDateString() === todayStr
+                );
 
-                    if (bestMatch.gmp.length > 30) {
-                        bestMatch.gmp.shift();
+                if (existingEntryIndex !== -1) {
+                    const existingEntry = bestMatch.gmp[existingEntryIndex];
+                    if (existingEntry.price !== gmpPrice) {
+                        console.log(`Updating Today's GMP for ${bestMatch.companyName} (${todayStr}): ${existingEntry.price} -> ${gmpPrice}`);
+                        existingEntry.price = gmpPrice;
+                        existingEntry.date = new Date(); // Update timestamp to latest
+                        await bestMatch.save();
+                        updatedCount++;
+                    } else {
+                        console.log(`GMP unchanged for ${bestMatch.companyName} today.`);
                     }
+                } else {
+                    const latestEntry = bestMatch.gmp.length > 0 ? bestMatch.gmp[bestMatch.gmp.length - 1] : null;
+                    const currentPrice = latestEntry ? latestEntry.price : 0;
 
-                    await bestMatch.save();
-                    updatedCount++;
+                    if (gmpPrice !== currentPrice || !latestEntry) {
+                        console.log(`Adding New GMP for ${bestMatch.companyName}: ${currentPrice} -> ${gmpPrice}`);
+                        bestMatch.gmp = bestMatch.gmp || [];
+                        bestMatch.gmp.push({
+                            price: gmpPrice,
+                            kostak: "0",
+                            date: new Date()
+                        });
+
+                        if (bestMatch.gmp.length > 30) {
+                            bestMatch.gmp.shift();
+                        }
+
+                        await bestMatch.save();
+                        updatedCount++;
+                    }
                 }
             }
         }
@@ -250,16 +270,31 @@ export const syncAllGMPData = async () => {
             }
 
             if (foundGmp !== null) {
-                const latestEntry = ipo.gmp && ipo.gmp.length > 0 ? ipo.gmp[ipo.gmp.length - 1] : null;
-                if (!latestEntry || latestEntry.price !== foundGmp) {
-                    ipo.gmp.push({
-                        price: foundGmp,
-                        kostak: "0",
-                        date: new Date()
-                    });
-                    if (ipo.gmp.length > 30) ipo.gmp.shift();
-                    await ipo.save();
-                    smeUpdatedCount++;
+                const todayStr = new Date().toDateString();
+                const existingEntryIndex = ipo.gmp.findIndex(entry =>
+                    new Date(entry.date).toDateString() === todayStr
+                );
+
+                if (existingEntryIndex !== -1) {
+                    const existingEntry = ipo.gmp[existingEntryIndex];
+                    if (existingEntry.price !== foundGmp) {
+                        existingEntry.price = foundGmp;
+                        existingEntry.date = new Date();
+                        await ipo.save();
+                        smeUpdatedCount++;
+                    }
+                } else {
+                    const latestEntry = ipo.gmp.length > 0 ? ipo.gmp[ipo.gmp.length - 1] : null;
+                    if (!latestEntry || latestEntry.price !== foundGmp) {
+                        ipo.gmp.push({
+                            price: foundGmp,
+                            kostak: "0",
+                            date: new Date()
+                        });
+                        if (ipo.gmp.length > 30) ipo.gmp.shift();
+                        await ipo.save();
+                        smeUpdatedCount++;
+                    }
                 }
             }
         }
