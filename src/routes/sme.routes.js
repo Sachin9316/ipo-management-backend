@@ -6,7 +6,9 @@ import {
     getSMEIPOById,
     updateSMEIPOById,
     deleteSMEIPOById,
-    deleteSMEBulk
+    deleteSMEBulk,
+    getSMEIPOForEdit,
+    manualUpdateSMEIPO
 } from '../controllers/sme.controller.js';
 import { ipoCreateSchema, ipoUpdateSchema } from '../schema/mainboard.schema.js';
 import { zodValidate } from '../middlewares/zod.middleware.js';
@@ -78,6 +80,47 @@ smeRoute.post('/sme-ipos', upload.single('icon'), parseJsonFields, zodValidate(i
  *         description: SME IPO details
  */
 smeRoute.get('/sme-ipo/:id', getSMEIPOById);
+
+/**
+ * @swagger
+ * /api/sme/edit/{id}:
+ *   get:
+ *     summary: Get SME IPO data for Manual Edit
+ *     tags: [SME IPOs]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: SME IPO details for edit
+ * */
+smeRoute.get('/edit/:id', getSMEIPOForEdit);
+
+/**
+ * @swagger
+ * /api/sme/edit/{id}:
+ *   patch:
+ *     summary: Manual Update of SME IPO
+ *     tags: [SME IPOs]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *     responses:
+ *       200:
+ *         description: SME IPO updated manually
+ * */
+smeRoute.patch("/edit/:id", upload.single('icon'), parseJsonFields, zodValidate(ipoUpdateSchema), manualUpdateSMEIPO);
 
 /**
  * @swagger

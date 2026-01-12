@@ -129,7 +129,8 @@ export const syncMainboardGMP = async () => {
         // only fetch MAINBOARD for this specific function?
         // existing logic was just MAINBOARD.
         const activeIpos = await Mainboard.find({
-            ipoType: 'MAINBOARD'
+            ipoType: 'MAINBOARD',
+            status: { $in: ['UPCOMING', 'OPEN'] }
         });
 
         console.log(`Found ${activeIpos.length} existing Mainboard IPOs to check for updates.`);
@@ -232,7 +233,7 @@ export const syncAllGMPData = async () => {
         });
 
         const activeSmeIpos = await Mainboard.find({
-            status: { $in: ['UPCOMING', 'OPEN', 'CLOSED', 'LISTED'] },
+            status: { $in: ['UPCOMING', 'OPEN'] },
             ipoType: 'SME'
         });
 

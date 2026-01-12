@@ -235,6 +235,89 @@ export const updateMainboardById = async (req, res) => {
     }
 };
 
+export const getMainboardForEdit = async (req, res) => {
+    try {
+        const { id } = req.params;
+        // Fetch raw document without any transformation if possible, or just standard findById
+        // We might want to ensure we get specific fields that form needs
+        const mainboard = await Mainboard.findById(id);
+        if (!mainboard) {
+            return res.status(404).json({ success: false, message: "Mainboard not found" });
+        }
+        res.status(200).json({
+            success: true,
+            message: "Mainboard fetched for edit successfully",
+            data: mainboard
+        });
+    } catch (error) {
+        serverErrorHandler(error, res);
+    }
+};
+
+export const manualUpdateMainboard = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const updateData = req.body; // Assuming body is already parsed and validated if we add middleware
+
+        delete updateData.slug;
+        delete updateData.ipoType;
+        // We trust the manual form to provide correct data structure.
+
+        // Handle Image Upload if present (though form might handle it separately, usually passing URL)
+        // If file is passed:
+        if (req.file) {
+            try {
+                const result = await uploadToCloudinary(req.file.buffer);
+                updateData.icon = result.secure_url;
+            } catch (uploadError) {
+                console.error("Image upload failed:", uploadError);
+                return res.status(500).json({ success: false, message: "Image upload failed" });
+            }
+        }
+
+        // SMART MERGE for Subscription (same protection as generic update to be safe)
+        const existingMainboard = await Mainboard.findById(id);
+        if (!existingMainboard) {
+            return res.status(404).json({ success: false, message: "Mainboard not found" });
+        }
+
+        if (updateData.subscription) {
+            const existingSub = existingMainboard.subscription || {};
+            const newSub = updateData.subscription;
+            const subKeys = ['qib', 'nii', 'bnii', 'snii', 'retail', 'employee', 'total'];
+            subKeys.forEach(key => {
+                if (Number(newSub[key]) === 0 && Number(existingSub[key]) > 0) {
+                    // actually for Manual Update, if user sends 0, they MEAN 0?
+                    // User said "avoiding accidental fields".
+                    // Let's assume manual form sends what user sees. If user sees 0 and saves 0, it should be 0.
+                    // BUT, if the form didn't load subscription data correctly, it might send 0.
+                    // Risk: User edits Price, form sends 0 for Sub.
+                    // Safety: Keep the protection. If user really wants 0, they can set it 0.01 or we rely on frontend sending existing values.
+                    // Better: If frontend sends the full object, trust it? 
+                    // Let's keep protection for now, it's safer.
+                    newSub[key] = existingSub[key];
+                }
+            });
+            updateData.subscription = newSub;
+        }
+
+        const updatedMainboard = await Mainboard.findByIdAndUpdate(
+            id,
+            { $set: updateData },
+            { new: true, runValidators: true }
+        );
+
+        res.status(200).json({
+            success: true,
+            message: "Mainboard manually updated successfully",
+            data: updatedMainboard
+        });
+
+    } catch (error) {
+        serverErrorHandler(error, res);
+    }
+};
+
 export const deleteMainboardById = async (req, res) => {
     try {
         const { id } = req.params;

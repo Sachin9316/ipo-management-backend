@@ -50,7 +50,7 @@ export const isSubsetMatch = (name1, name2) => {
 
 // Helper: Clean currency strings (e.g., "₹ 12,000" -> 12000)
 export const parseCurrency = (str) => {
-    if (!str || str.toLowerCase().includes('-') || str.toLowerCase().includes('n/a')) return 0;
+    if (!str || str.toLowerCase().includes('n/a')) return 0;
     // Extract numbers and decimal point
     const match = str.replace(/,/g, '').match(/[\d.]+/);
     return match ? parseFloat(match[0]) : 0;

@@ -238,3 +238,72 @@ export const deleteSMEBulk = async (req, res) => {
         serverErrorHandler(error, res);
     }
 };
+
+export const getSMEIPOForEdit = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const smeIPO = await Mainboard.findOne({ _id: id, ipoType: 'SME' });
+        if (!smeIPO) {
+            return res.status(404).json({ message: "SME IPO not found" });
+        }
+        res.status(200).json({
+            success: true,
+            message: "SME IPO fetched for edit successfully",
+            data: smeIPO
+        });
+    } catch (error) {
+        serverErrorHandler(error, res);
+    }
+};
+
+export const manualUpdateSMEIPO = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const updateData = req.body;
+
+        delete updateData.slug;
+        delete updateData.ipoType; // strict
+
+        if (req.file) {
+            try {
+                const result = await uploadToCloudinary(req.file.buffer);
+                updateData.icon = result.secure_url;
+            } catch (uploadError) {
+                console.error("Image upload failed:", uploadError);
+                return res.status(500).json({ success: false, message: "SME Image upload failed" });
+            }
+        }
+
+        const existingSME = await Mainboard.findOne({ _id: id, ipoType: 'SME' });
+        if (!existingSME) {
+            return res.status(404).json({ success: false, message: "SME IPO not found" });
+        }
+
+        if (updateData.subscription) {
+            const existingSub = existingSME.subscription || {};
+            const newSub = updateData.subscription;
+            const subKeys = ['qib', 'nii', 'bnii', 'snii', 'retail', 'employee', 'total'];
+            subKeys.forEach(key => {
+                if (Number(newSub[key]) === 0 && Number(existingSub[key]) > 0) {
+                    newSub[key] = existingSub[key];
+                }
+            });
+            updateData.subscription = newSub;
+        }
+
+        const updatedSME = await Mainboard.findOneAndUpdate(
+            { _id: id, ipoType: 'SME' },
+            { $set: updateData },
+            { new: true, runValidators: true }
+        );
+
+        res.status(200).json({
+            success: true,
+            message: "SME IPO manually updated successfully",
+            data: updatedSME
+        });
+
+    } catch (error) {
+        serverErrorHandler(error, res);
+    }
+};

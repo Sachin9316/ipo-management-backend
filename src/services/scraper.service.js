@@ -451,6 +451,10 @@ const syncIPOData = async (limit, type) => {
                 // Final Type Check
                 if (type !== 'ALL' && ipo.ipoType !== type) continue;
 
+                // [NEW] FILTER: Skip if status is already CLOSED or LISTED
+                // We only want to process UPCOMING or OPEN IPOs for new entries.
+                if (ipo.status === 'CLOSED' || ipo.status === 'LISTED') continue;
+
                 // Validate Registrar
                 if (ipo.registrarName && ipo.registrarName !== "N/A") {
                     const matchedRegistrar = matchRegistrar(ipo.registrarName, dbRegistrars);
@@ -492,78 +496,44 @@ const syncIPOData = async (limit, type) => {
                     }
                 }
 
-                if (ipo.status === 'UPCOMING' || ipo.status === 'OPEN') {
-                    ipo.isAllotmentOut = false;
-                } else {
-                    if (new Date(ipo.allotment_date).setHours(0, 0, 0, 0) <= new Date().setHours(0, 0, 0, 0)) ipo.isAllotmentOut = true;
-                    if (existingIPO && existingIPO.isAllotmentOut) ipo.isAllotmentOut = true;
-                }
-
                 if (existingIPO) {
-                    if (ipo.ipoType === 'SME') {
-                        const latestGmp = existingIPO.gmp && existingIPO.gmp.length > 0 ? existingIPO.gmp[existingIPO.gmp.length - 1] : null;
-                        const newGmpPrice = ipo.gmp && ipo.gmp.length > 0 ? ipo.gmp[0].price : 0;
-
-                        if (ipo.gmp && ipo.gmp.length > 0 && (!latestGmp || latestGmp.price !== newGmpPrice)) {
-                            existingIPO.gmp.push(ipo.gmp[0]);
-                            if (existingIPO.gmp.length > 30) existingIPO.gmp.shift();
-                        }
+                    // STOP UPDATES for finalized statuses
+                    if (['CLOSED', 'LISTED', 'CANCELLED'].includes(existingIPO.status)) {
+                        continue;
                     }
 
-                    // Destructure to separate fields we want to check before updating
-                    // PROTECTED FIELDS: companyName, registrarName, ipoType, icon (Manual Management / Anti-Overwrite)
-                    const { gmp, ipoType, registrarName, companyName, subscription, lot_size, lot_price, issueSize, icon, listing_info, ...otherData } = ipo;
+                    // RESTRICTED UPDATE: Only update GMP and Subscription
+                    const updatePayload = {};
 
-                    const updateData = { ...otherData, gmp: existingIPO.gmp };
+                    // 1. GMP Update Logic
+                    const latestGmp = existingIPO.gmp && existingIPO.gmp.length > 0 ? existingIPO.gmp[existingIPO.gmp.length - 1] : null;
+                    const newGmpPrice = ipo.gmp && ipo.gmp.length > 0 ? ipo.gmp[0].price : 0;
 
-                    // ICON STRATEGY: Trust the incoming scraper/API data first if it's a real logo.
-                    if (icon && icon !== DEFAULT_ICON) {
-                        updateData.icon = icon;
-                    } else if (existingIPO.icon && existingIPO.icon !== DEFAULT_ICON) {
-                        updateData.icon = existingIPO.icon;
-                    } else {
-                        updateData.icon = DEFAULT_ICON;
+                    if (ipo.gmp && ipo.gmp.length > 0 && (!latestGmp || latestGmp.price !== newGmpPrice)) {
+                        existingIPO.gmp.push(ipo.gmp[0]);
+                        if (existingIPO.gmp.length > 30) existingIPO.gmp.shift();
+                        updatePayload.gmp = existingIPO.gmp;
                     }
 
-                    // PRESERVE RICH DATA: Do not overwrite with zeros/empty if we already have data
-                    if (subscription && subscription.total > 0) {
-                        updateData.subscription = subscription;
-                    } else if (existingIPO.subscription && existingIPO.subscription.total > 0) {
-                        updateData.subscription = existingIPO.subscription;
+                    // 2. Subscription Update Logic
+                    if (ipo.subscription && ipo.subscription.total > 0) {
+                        updatePayload.subscription = ipo.subscription;
                     }
 
-                    // Handling Listing Info (New)
-                    if (listing_info && (listing_info.listing_price > 0 || listing_info.listing_gain > 0)) {
-                        updateData.listing_info = listing_info;
-                    } else if (existingIPO.listing_info && (existingIPO.listing_info.listing_price > 0 || existingIPO.listing_info.listing_gain > 0)) {
-                        updateData.listing_info = existingIPO.listing_info;
+                    // Apply updates if any
+                    if (Object.keys(updatePayload).length > 0) {
+                        await Mainboard.updateOne({ slug: ipo.slug }, { $set: updatePayload });
                     }
-
-                    if (lot_size > 0) updateData.lot_size = lot_size;
-                    else if (existingIPO.lot_size > 0) updateData.lot_size = existingIPO.lot_size;
-
-                    if (lot_price > 0) updateData.lot_price = lot_price;
-                    else if (existingIPO.lot_price > 0) updateData.lot_price = existingIPO.lot_price;
-
-                    if (issueSize && issueSize !== "0.00" && issueSize !== "0") updateData.issueSize = issueSize;
-                    else if (existingIPO.issueSize && existingIPO.issueSize !== "0.00") updateData.issueSize = existingIPO.issueSize;
-
-                    // Only update Registrar if it's missing or N/A in DB
-                    if (!existingIPO.registrarName || existingIPO.registrarName === 'N/A') {
-                        if (registrarName && registrarName !== 'N/A') {
-                            updateData.registrarName = registrarName;
-                        }
-                    }
-
-                    // Only update IPO Type if it's currently invalid/missing in DB
-                    // If user manually set it to SME or MAINBOARD, we respect that.
-                    if (!existingIPO.ipoType || existingIPO.ipoType === 'N/A') {
-                        updateData.ipoType = ipoType;
-                    }
-
-                    await Mainboard.updateOne({ slug: ipo.slug }, { $set: updateData });
                 } else {
-                    if (ipo.ipoType !== 'SME') ipo.gmp = [];
+                    // New IPO - Create with full data
+                    // Calculate allotment flag for new IPOs
+                    if (ipo.status === 'UPCOMING' || ipo.status === 'OPEN') {
+                        ipo.isAllotmentOut = false;
+                    } else {
+                        if (new Date(ipo.allotment_date).setHours(0, 0, 0, 0) <= new Date().setHours(0, 0, 0, 0)) ipo.isAllotmentOut = true;
+                    }
+
+                    if (ipo.ipoType !== 'SME') ipo.gmp = []; // Mainboard GMP often empty initially from this scraper source
                     await Mainboard.create(ipo);
                 }
                 savedCount++;

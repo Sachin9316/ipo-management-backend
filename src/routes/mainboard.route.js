@@ -6,7 +6,9 @@ import {
     getMainboardById,
     updateMainboardById,
     deleteMainboardById,
-    deleteMainboardBulk
+    deleteMainboardBulk,
+    getMainboardForEdit,
+    manualUpdateMainboard
 } from '../controllers/mainboard.controller.js';
 import { ipoCreateSchema, ipoUpdateSchema } from '../schema/mainboard.schema.js';
 import { zodValidate } from '../middlewares/zod.middleware.js';
@@ -91,6 +93,47 @@ mainboardRoute.post('/mainboards', upload.single('icon'), parseJsonFields, zodVa
  *         description: The IPO was not found
  */
 mainboardRoute.get('/mainboard/:id', getMainboardById);
+
+/**
+ * @swagger
+ * /api/mainboard/edit/{id}:
+ *   get:
+ *     summary: Get Mainboard IPO data for Manual Edit
+ *     tags: [Mainboard IPOs]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: IPO data for editing
+ * */
+mainboardRoute.get('/edit/:id', getMainboardForEdit);
+
+/**
+ * @swagger
+ * /api/mainboard/edit/{id}:
+ *   patch:
+ *     summary: Manual Update of Mainboard IPO
+ *     tags: [Mainboard IPOs]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *     responses:
+ *       200:
+ *         description: IPO updated manually
+ * */
+mainboardRoute.patch("/edit/:id", upload.single('icon'), parseJsonFields, zodValidate(ipoUpdateSchema), manualUpdateMainboard);
 
 /**
  * @swagger
