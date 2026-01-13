@@ -209,6 +209,18 @@ export const addMyPan = async (req, res) => {
             });
 
             await user.save();
+
+            // AUTO-QUEUE REMOVED: User request to disable immediate checking.
+            // Checks will only happen when user visits the AllotmentResultScreen.
+
+            /*
+            try {
+                // ... (Logic removed to prevent worker overload)
+            } catch (queueError) {
+                console.error("Failed to auto-queue jobs for new PAN:", queueError);
+            }
+            */
+
             res.status(201).json(user.panDocuments);
         } else {
             res.status(404).json({ message: "User not found" });

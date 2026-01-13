@@ -1,27 +1,83 @@
-import axios from 'axios';
-import { getSimilarity } from '../utils/matching.js';
+import { addBulkToQueue } from './queue.service.js';
+import AllotmentResult from '../models/AllotmentResult.js';
 
-const WORKER_URL = process.env.WORKER_URL || 'http://localhost:3000';
-console.log(`WORKER_URL: ${WORKER_URL}`);
-
-export const checkBigshareStatus = async (ipoName, panNumbers) => {
+/**
+ * Check Bigshare allotment status: Check DB -> Queue if Missing -> Return CHECKING
+ */
+export const checkBigshareStatus = async (ipo, panNumbers) => {
     try {
-        console.log(`Delegating Bigshare check for "${ipoName}" to WORKER at ${WORKER_URL}`);
+        console.log(`Checking Bigshare status for ${panNumbers.length} PANs for ${ipo.companyName} (Async)`);
 
-        const response = await axios.post(`${WORKER_URL}/check-bigshare`, {
-            ipoName,
-            panNumbers
+        // 1. Check DB Cache
+        const cachedResults = await AllotmentResult.find({
+            ipoId: ipo._id,
+            panNumber: { $in: panNumbers }
         });
 
-        return response.data;
+        const details = [];
+        const missingPANs = [];
+
+        for (const pan of panNumbers) {
+            const found = cachedResults.find(r => r.panNumber === pan);
+            if (found) {
+                details.push({
+                    pan,
+                    status: found.status,
+                    message: found.message,
+                    units: found.units
+                });
+            } else {
+                details.push({ pan, status: 'CHECKING', message: 'Checking...' });
+                missingPANs.push(pan);
+            }
+        }
+
+        // 2. Queue Missing
+        if (missingPANs.length > 0) {
+            console.log(`Queuing ${missingPANs.length} PANs for Bigshare background check.`);
+
+            // CRITICAL: Save CHECKING status to DB *BEFORE* queuing to prevent race condition
+            // If we queue first, a fast worker might finish and save result, which we then overwrite with checking!
+            const savePromises = missingPANs.map(pan =>
+                AllotmentResult.findOneAndUpdate(
+                    { ipoId: ipo._id, panNumber: pan },
+                    {
+                        status: 'CHECKING',
+                        message: 'Checking...',
+                        units: 0,
+                        lastChecked: new Date()
+                    },
+                    { upsert: true, new: true }
+                )
+            );
+            await Promise.all(savePromises);
+            console.log(`✅ Saved CHECKING status for ${missingPANs.length} PANs`);
+
+            const jobs = missingPANs.map(pan => ({
+                ipoId: ipo._id,
+                ipoName: ipo.companyName,
+                panNumber: pan,
+                registrar: 'BIGSHARE'
+            }));
+
+            await addBulkToQueue(jobs);
+        }
+
+        return {
+            summary: {
+                allotted: details.filter(d => d.status === 'ALLOTTED').length,
+                notAllotted: details.filter(d => d.status === 'NOT_ALLOTTED').length,
+                checking: details.filter(d => d.status === 'CHECKING').length,
+                error: details.filter(d => d.status === 'ERROR').length
+            },
+            details
+        };
 
     } catch (error) {
-        console.error('Error calling Bigshare Worker:', error.message);
-        if (error.response) {
-            console.error('Worker Response:', error.response.data);
-        }
+        console.error('Error in Async Bigshare Check:', error.message);
         return {
-            details: panNumbers.map(pan => ({ pan, status: 'NOT_APPLIED', message: 'No record found' }))
+            summary: { allotted: 0, notAllotted: 0, error: panNumbers.length, checking: 0 },
+            details: panNumbers.map(pan => ({ pan, status: 'ERROR', message: error.message }))
         };
     }
 };

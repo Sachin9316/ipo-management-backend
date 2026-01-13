@@ -1,8 +1,12 @@
 import axios from 'axios';
-import { getSimilarity } from '../utils/matching.js';
+import { addBulkToQueue } from './queue.service.js';
+import AllotmentResult from '../models/AllotmentResult.js';
 
 const WORKER_URL = process.env.WORKER_URL || 'http://localhost:3000';
 
+/**
+ * Fetch MUFG IPO List (Keep for dropdown purposes)
+ */
 export const fetchMUFGIPOList = async () => {
     try {
         console.log(`Delegating MUFG IPO List fetch to WORKER at ${WORKER_URL}`);
@@ -14,24 +18,83 @@ export const fetchMUFGIPOList = async () => {
     }
 };
 
-export const checkMUFGStatus = async (ipoName, panNumbers) => {
+/**
+ * Check MUFG/LinkIntime allotment status: Check DB -> Queue if Missing -> Return CHECKING
+ */
+export const checkMUFGStatus = async (ipo, panNumbers) => {
     try {
-        console.log(`Delegating MUFG check for "${ipoName}" to WORKER at ${WORKER_URL}`);
+        console.log(`Checking MUFG status for ${panNumbers.length} PANs for ${ipo.companyName} (Async)`);
 
-        const response = await axios.post(`${WORKER_URL}/check-mufg`, {
-            ipoName,
-            panNumbers
+        // 1. Check DB Cache with proper ipoId filtering
+        const cachedResults = await AllotmentResult.find({
+            ipoId: ipo._id,
+            panNumber: { $in: panNumbers }
         });
 
-        return response.data;
-    } catch (error) {
-        console.error('Error calling MUFG Worker:', error.message);
-        if (error.response) {
-            console.error('Worker Response:', error.response.data);
+        const details = [];
+        const missingPANs = [];
+
+        for (const pan of panNumbers) {
+            const found = cachedResults.find(r => r.panNumber === pan);
+            if (found) {
+                details.push({
+                    pan,
+                    status: found.status,
+                    message: found.message,
+                    units: found.units
+                });
+            } else {
+                details.push({ pan, status: 'CHECKING', message: 'Checking...' });
+                missingPANs.push(pan);
+            }
+        }
+
+        // 2. Queue Missing
+        if (missingPANs.length > 0) {
+            console.log(`Queuing ${missingPANs.length} PANs for MUFG background check.`);
+
+            // CRITICAL: Save CHECKING status to DB *BEFORE* queuing to prevent race condition
+            // If we queue first, a fast worker might finish and save result, which we then overwrite with checking!
+            const savePromises = missingPANs.map(pan =>
+                AllotmentResult.findOneAndUpdate(
+                    { ipoId: ipo._id, panNumber: pan },
+                    {
+                        status: 'CHECKING',
+                        message: 'Checking...',
+                        units: 0,
+                        lastChecked: new Date()
+                    },
+                    { upsert: true, new: true }
+                )
+            );
+            await Promise.all(savePromises);
+            console.log(`✅ Saved CHECKING status for ${missingPANs.length} PANs`);
+
+            const jobs = missingPANs.map(pan => ({
+                ipoId: ipo._id,
+                ipoName: ipo.companyName,
+                panNumber: pan,
+                registrar: 'MUFG'
+            }));
+
+            await addBulkToQueue(jobs);
         }
 
         return {
-            details: panNumbers.map(pan => ({ pan, status: 'NOT_APPLIED', message: 'No record found' }))
+            summary: {
+                allotted: details.filter(d => d.status === 'ALLOTTED').length,
+                notAllotted: details.filter(d => d.status === 'NOT_ALLOTTED').length,
+                checking: details.filter(d => d.status === 'CHECKING').length,
+                error: details.filter(d => d.status === 'ERROR').length
+            },
+            details
+        };
+
+    } catch (error) {
+        console.error('Error in Async MUFG Check:', error.message);
+        return {
+            summary: { allotted: 0, notAllotted: 0, error: panNumbers.length, checking: 0 },
+            details: panNumbers.map(pan => ({ pan, status: 'ERROR', message: error.message }))
         };
     }
 };

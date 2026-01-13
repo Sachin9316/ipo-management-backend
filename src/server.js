@@ -64,6 +64,11 @@ import swaggerSpec from './config/swagger.js';
 
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
+import { initWorker } from './services/queue.service.js';
+
+// Initialize Background Workers
+initWorker();
+
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });

@@ -15,7 +15,7 @@ const allotmentResultSchema = new mongoose.Schema(
         },
         status: {
             type: String,
-            enum: ["ALLOTTED", "NOT_ALLOTTED", "NOT_APPLIED", "ERROR", "UNKNOWN"],
+            enum: ["ALLOTTED", "NOT_ALLOTTED", "NOT_APPLIED", "ERROR", "UNKNOWN", "CHECKING"],
             required: true,
         },
         units: {

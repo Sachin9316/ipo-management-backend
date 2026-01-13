@@ -8,7 +8,8 @@ const TTL = {
     ALLOTTED: 24 * 60 * 60 * 1000,
     NOT_ALLOTTED: 24 * 60 * 60 * 1000,
     UNKNOWN: 45 * 60 * 1000,
-    ERROR: 15 * 60 * 1000
+    ERROR: 15 * 60 * 1000,
+    CHECKING: 60 * 1000 // 60 seconds - allows worker sufficient time to complete
 };
 
 export const checkAllotment = async (req, res) => {
@@ -50,6 +51,7 @@ export const checkAllotment = async (req, res) => {
             const record = cacheMap.get(pan);
             if (
                 record &&
+                (record.status !== 'CHECKING' || (now - new Date(record.lastChecked).getTime() < TTL.CHECKING)) && // Respect CHECKING if recent
                 now - new Date(record.lastChecked).getTime() <
                 (TTL[record.status] || TTL.UNKNOWN) &&
                 !record.message?.includes("Registrar not supported") &&
@@ -73,26 +75,38 @@ export const checkAllotment = async (req, res) => {
         if (pansToCheck.length) {
             let apiResponse;
 
-            // Resolve registrar name: prefer request, fallback to DB
-            const registrarToUse = (registrar || ipo.registrarName || "").toUpperCase();
+            // Resolve registrar: check request param, registrarName, and registrarLink
+            const registrarName = (registrar || ipo.registrarName || "").toUpperCase();
+            const registrarLink = (ipo.registrarLink || ipo.registrar || "").toUpperCase();
+            const registrarToUse = registrarName || registrarLink;
+
+            console.log(`🔍 Detecting registrar for ${ipo.companyName}:`, { registrarName, registrarLink });
 
             if (registrarToUse.includes("KFIN")) {
                 apiResponse = await checkKFintechStatus(ipo, pansToCheck);
             } else if (registrarToUse.includes("MUFG") || registrarToUse.includes("LINK") || registrarToUse.includes("INTIME")) {
                 // MUFG/Link Intime
-                apiResponse = await checkMUFGStatus(ipo.companyName, pansToCheck);
+                apiResponse = await checkMUFGStatus(ipo, pansToCheck);
             } else if (registrarToUse.includes("BIGSHARE")) {
                 // Bigshare
                 const { checkBigshareStatus } = await import('../services/bigshare.service.js');
-                apiResponse = await checkBigshareStatus(ipo.companyName, pansToCheck);
+                apiResponse = await checkBigshareStatus(ipo, pansToCheck);
             } else {
-                apiResponse = {
-                    details: pansToCheck.map(p => ({
-                        pan: p,
-                        status: "UNKNOWN",
-                        message: "Registrar not supported"
-                    }))
-                };
+                // For other registrars (Cameo, Skyline, Maashitla, Purva, etc.)
+                // Try KFintech as fallback since many use similar systems
+                console.log(`⚠️ Unknown registrar: ${registrarToUse}. Attempting KFintech fallback...`);
+                try {
+                    apiResponse = await checkKFintechStatus(ipo, pansToCheck);
+                } catch (error) {
+                    console.error(`KFintech fallback failed for ${registrarToUse}:`, error.message);
+                    apiResponse = {
+                        details: pansToCheck.map(p => ({
+                            pan: p,
+                            status: "UNKNOWN",
+                            message: `Registrar not supported: ${registrarToUse}`
+                        }))
+                    };
+                }
             }
 
             for (const item of apiResponse.details) {
