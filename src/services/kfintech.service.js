@@ -17,9 +17,16 @@ export const checkKFintechStatus = async (ipo, panNumbers) => {
         const details = [];
         const missingPANs = [];
 
+        const TTL_CHECKING = 60 * 1000; // 60 seconds
+        const now = Date.now();
+
         for (const pan of panNumbers) {
             const found = cachedResults.find(r => r.panNumber === pan);
-            if (found) {
+
+            // CHECK STALE STATUS: If status is CHECKING but it's been more than 60s, assume worker died and re-queue
+            const isStaleChecking = found && found.status === 'CHECKING' && (now - new Date(found.lastChecked).getTime() > TTL_CHECKING);
+
+            if (found && !isStaleChecking) {
                 details.push({
                     pan,
                     status: found.status,
@@ -27,6 +34,9 @@ export const checkKFintechStatus = async (ipo, panNumbers) => {
                     units: found.units
                 });
             } else {
+                if (isStaleChecking) {
+                    console.warn(`⚠️ Stale CHECKING status found for ${pan} (Last checked: ${found.lastChecked}). Re-queuing.`);
+                }
                 details.push({ pan, status: 'CHECKING', message: 'Checking...' });
                 missingPANs.push(pan);
             }

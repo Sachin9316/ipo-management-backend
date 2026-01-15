@@ -22,13 +22,58 @@ const parseDate = (str) => {
 };
 
 // Helper: Calculate status based on dates
+// Helper: Calculate status based on dates with strict 5 PM IST cutoff
 const calculateStatus = (open, close, listing) => {
-    const now = new Date();
-    if (!open) return "UPCOMING";
-    if (now < open) return "UPCOMING";
-    if (now >= open && now <= close) return "OPEN";
-    if (now > close && (!listing || now < listing)) return "CLOSED";
-    if (listing && now >= listing) return "LISTED";
+    // 1. Get Current IST Time as a "Wall Clock" Date object
+    // This ensures that valid IST time components are used regardless of server timezone
+    const nowIST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+
+    // 2. Normalize Input Dates to start of day
+    const openDate = open ? new Date(open) : null;
+    const closeDate = close ? new Date(close) : null;
+    const listingDate = listing ? new Date(listing) : null;
+
+    if (openDate) openDate.setHours(0, 0, 0, 0);
+    if (closeDate) closeDate.setHours(0, 0, 0, 0);
+    if (listingDate) listingDate.setHours(0, 0, 0, 0);
+
+    // 3. Logic
+    // If we have listing date and we passed it -> LISTED
+    if (listingDate && nowIST >= listingDate) return "LISTED";
+
+    // OPEN CHECK
+    // Must be on or after Open Date
+    // AND
+    // Before Close Date OR (On Close Date AND Before 5 PM)
+    if (openDate && nowIST >= openDate) {
+        if (!closeDate) return "OPEN"; // No close date implies open indefinitely or data missing, default to OPEN if started
+
+        // Check Closing Logic
+        // Normalize nowIST to remove time for date comparison
+        const todayIST = new Date(nowIST);
+        todayIST.setHours(0, 0, 0, 0);
+
+        if (todayIST < closeDate) {
+            // Before the closing day
+            return "OPEN";
+        } else if (todayIST.getTime() === closeDate.getTime()) {
+            // It IS the closing day
+            // Check time: 17:00 IST cutoff
+            if (nowIST.getHours() < 17) {
+                return "OPEN";
+            } else {
+                return "CLOSED";
+            }
+        } else {
+            // After closing day
+            return "CLOSED";
+        }
+    }
+
+    // If not yet open
+    if (openDate && nowIST < openDate) return "UPCOMING";
+
+    // Fallback if no dates
     return "CLOSED";
 };
 
@@ -46,26 +91,24 @@ export const scrapeIPOData = async (limit = 3) => {
         });
         const $ = cheerio.load(listHtml);
 
-        const ipos = [];
         // The main GMP table is usually the first table in a figure
-        const rows = $('figure.wp-block-table table tbody tr').slice(0, limit + 5); // Take a few extra to account for headers
-        console.log(`Found ${rows.length} raw rows.`);
+        // [OPTIMIZATION] Take only strict limit + 2 buffer to avoid over-fetching in parallel
+        const rows = $('figure.wp-block-table table tbody tr').slice(0, limit + 2).toArray();
+        console.log(`Found ${rows.length} rows to process.`);
 
-        for (const element of rows) {
+        const scrapePromises = rows.map(async (element) => {
             const row = $(element);
 
             // Expected Columns: Stock/IPO | IPO GMP | IPO Price | Listing Gain | Date | Type
-            // Check headers if possible, but assuming standard order based on verification
             const anchor = row.find('td:nth-child(1) a');
             const name = anchor.text().trim();
             const link = anchor.attr('href');
 
             const gmpStr = row.find('td:nth-child(2)').text().trim(); // "₹5" or "₹-"
             const priceStr = row.find('td:nth-child(3)').text().trim(); // "₹239" or "₹227 to ₹239"
-            // const dateStr = row.find('td:nth-child(5)').text().trim(); // "23-26 Dec"
             const typeStr = row.find('td:nth-child(7)').text().trim(); // "SME" or "Mainboard"
 
-            if (!name || !link) continue;
+            if (!name || !link) return null;
 
             let gmpVal = parseCurrency(gmpStr);
             console.log(`Scraping details for ${name} from ${link}...`);
@@ -177,7 +220,7 @@ export const scrapeIPOData = async (limit = 3) => {
 
                 const finalStatus = calculateStatus(openDate, closeDate, listingDate);
 
-                const ipoData = {
+                return {
                     companyName: name,
                     slug: slugify(name, { lower: true, strict: true }),
                     icon: DEFAULT_ICON, // Placeholder
@@ -212,16 +255,24 @@ export const scrapeIPOData = async (limit = 3) => {
                     link: link
                 };
 
-                ipos.push(ipoData);
-                if (ipos.length >= limit) break;
-
             } catch (detailError) {
                 console.error(`Error scraping details for ${name}:`, detailError.message);
-                continue;
+                return null;
             }
-        }
+        });
 
-        return ipos;
+        // Executing parallel requests
+        console.log(`Allocating workers for ${scrapePromises.length} items...`);
+        const results = await Promise.all(scrapePromises);
+
+        // Filter out failures and nulls
+        const validIPOs = results.filter(item => item !== null);
+
+        // Respect the original strict limit for output
+        const finalIPOs = validIPOs.slice(0, limit);
+        console.log(`Successfully scraped ${finalIPOs.length} IPOs.`);
+
+        return finalIPOs;
     } catch (error) {
         console.error("Scraping Error:", error);
         throw new Error("Failed to scrape IPO data");
@@ -310,7 +361,7 @@ const syncIPOData = async (limit, type) => {
 
             // Detection Logic
             const itemType = item.ipoType || (stripHtml(item.listing_at || '').toLowerCase().includes('sme') ? 'SME' : 'MAINBOARD');
-            if (type !== 'ALL' && itemType !== type) return;
+            if (type !== 'ALL' && itemType !== type) continue;
 
             ipoMap.set(item.slug, {
                 ...item,
@@ -331,7 +382,7 @@ const syncIPOData = async (limit, type) => {
 
         // 2. Merge IPOWatch Data
         for (const scraped of ipowatchIpos) {
-            if (type !== 'ALL' && scraped.ipoType !== type) return;
+            if (type !== 'ALL' && scraped.ipoType !== type) continue;
 
             let match = ipoMap.get(scraped.slug);
             if (!match) {
@@ -344,7 +395,7 @@ const syncIPOData = async (limit, type) => {
                         bestSlug = slug;
                     }
                 }
-                if (bestScore > 0.3 && bestSlug) match = ipoMap.get(bestSlug);
+                if (bestScore > 0.7 && bestSlug) match = ipoMap.get(bestSlug);
             }
 
             if (match) {
@@ -377,7 +428,7 @@ const syncIPOData = async (limit, type) => {
         // 3. Merge Chittorgarh Legacy Data
         for (const legacy of chittorgarhIpos) {
             // legacy.ipoType is already filtered by fetcher but good to check
-            if (type !== 'ALL' && legacy.ipoType !== type) return;
+            if (type !== 'ALL' && legacy.ipoType !== type) continue;
 
             let match = ipoMap.get(legacy.slug);
             if (!match) {
@@ -390,7 +441,7 @@ const syncIPOData = async (limit, type) => {
                         bestSlug = slug;
                     }
                 }
-                if (bestScore > 0.3 && bestSlug) match = ipoMap.get(bestSlug);
+                if (bestScore > 0.7 && bestSlug) match = ipoMap.get(bestSlug);
             }
 
             if (match) {
@@ -453,7 +504,8 @@ const syncIPOData = async (limit, type) => {
 
                 // [NEW] FILTER: Skip if status is already CLOSED or LISTED
                 // We only want to process UPCOMING or OPEN IPOs for new entries.
-                if (ipo.status === 'CLOSED' || ipo.status === 'LISTED') continue;
+                // FIXED: We must NOT skip here because we need to update EXISTING IPOs that just turned CLOSED.
+                // if (ipo.status === 'CLOSED' || ipo.status === 'LISTED') continue;
 
                 // Validate Registrar
                 if (ipo.registrarName && ipo.registrarName !== "N/A") {
@@ -490,7 +542,7 @@ const syncIPOData = async (limit, type) => {
                             bestMatch = existing;
                         }
                     }
-                    if (bestMatch && highestScore > 0.3) {
+                    if (bestMatch && highestScore > 0.7) {
                         ipo.slug = bestMatch.slug;
                         existingIPO = await Mainboard.findOne({ slug: ipo.slug });
                     }
@@ -502,7 +554,7 @@ const syncIPOData = async (limit, type) => {
                         continue;
                     }
 
-                    // RESTRICTED UPDATE: Only update GMP and Subscription
+                    // RESTRICTED UPDATE: Update GMP, Subscription, and Status
                     const updatePayload = {};
 
                     // 1. GMP Update Logic
@@ -520,6 +572,18 @@ const syncIPOData = async (limit, type) => {
                         updatePayload.subscription = ipo.subscription;
                     }
 
+                    // 3. Status Update Logic (Fix for Stuck Open)
+                    if (ipo.status && ipo.status !== existingIPO.status) {
+                        console.log(`Status Change Detected for ${ipo.companyName}: ${existingIPO.status} -> ${ipo.status}`);
+                        updatePayload.status = ipo.status;
+
+                        // If status changed to CLOSED or LISTED, ensure allotment flag is correct
+                        if (ipo.status === 'CLOSED' || ipo.status === 'LISTED') {
+                            // Keep existing allotment status logic or re-evaluate? 
+                            // Usually allotment comes out days after close.
+                        }
+                    }
+
                     // Apply updates if any
                     if (Object.keys(updatePayload).length > 0) {
                         await Mainboard.updateOne({ slug: ipo.slug }, { $set: updatePayload });
@@ -530,11 +594,20 @@ const syncIPOData = async (limit, type) => {
                     if (ipo.status === 'UPCOMING' || ipo.status === 'OPEN') {
                         ipo.isAllotmentOut = false;
                     } else {
-                        if (new Date(ipo.allotment_date).setHours(0, 0, 0, 0) <= new Date().setHours(0, 0, 0, 0)) ipo.isAllotmentOut = true;
+                        if (ipo.allotment_date && new Date(ipo.allotment_date).setHours(0, 0, 0, 0) <= new Date().setHours(0, 0, 0, 0)) ipo.isAllotmentOut = true;
                     }
 
-                    if (ipo.ipoType !== 'SME') ipo.gmp = []; // Mainboard GMP often empty initially from this scraper source
-                    await Mainboard.create(ipo);
+                    // CRITICAL FALLBACKS for required fields (Mongoose Validation protection)
+                    const baseDate = ipo.close_date || ipo.open_date || new Date();
+                    if (!ipo.listing_date) ipo.listing_date = new Date(baseDate.getTime() + 6 * 24 * 60 * 60 * 1000);
+                    if (!ipo.allotment_date) ipo.allotment_date = new Date(baseDate.getTime() + 3 * 24 * 60 * 60 * 1000);
+                    if (!ipo.refund_date) ipo.refund_date = new Date(baseDate.getTime() + 4 * 24 * 60 * 60 * 1000);
+
+                    if (ipo.ipoType !== 'SME') ipo.gmp = [];
+
+                    const newMainboard = new Mainboard(ipo);
+                    await newMainboard.save();
+                    console.log(`✅ Saved new IPO: ${ipo.companyName}`);
                 }
                 savedCount++;
             } catch (err) {

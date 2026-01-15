@@ -1,0 +1,16 @@
+Run Error: The `uri` parameter to `openUri()` must be a string, got "undefined". Make sure the first parameter to `mongoose.connect()` or `mongoose.createConnection()` is a string.
+DB Connected for Live Scrape Test
+Triggering Mainboard Sync...
+Sync Result: {"success":true,"count":1,"total":5,"errors":[]}
+DB Connected for Live Scrape Test
+Triggering Mainboard Sync...
+Sync Result: {"success":true,"count":1,"total":5,"errors":[]}
+DB Connected for Live Scrape Test
+Triggering Mainboard Sync...
+Sync Result: {"success":true,"count":1,"total":29,"errors":[]}
+DB Connected for Live Scrape Test
+Triggering Mainboard Sync...
+DB Connected for Live Scrape Test
+Triggering Mainboard Sync...
+Sync Result: {"success":true,"count":1,"total":29,"errors":[]}
+Sync Result: {"success":true,"count":1,"total":29,"errors":[]}

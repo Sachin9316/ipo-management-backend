@@ -1,0 +1,8 @@
+{
+    "crons": [
+        {
+            "path": "/api/scraper/cron?limit=1",
+            "schedule": "*/15 * * * *"
+        }
+    ]
+}

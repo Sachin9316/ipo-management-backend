@@ -8,9 +8,9 @@ const getYear = () => new Date().getFullYear();
 const getMonth = () => new Date().getMonth() + 1;
 const getFinancialYear = () => {
     const year = new Date().getFullYear();
-    const month = new Date().getMonth() + 1;
-    if (month >= 4) return `${year}-${(year + 1).toString().slice(-2)}`;
-    return `${year - 1}-${year.toString().slice(-2)}`;
+    // API Quirk: Generally expects current year - next year (e.g., 2026 -> 2026-27)
+    // independent of the actual financial year start in April.
+    return `${year}-${(year + 1).toString().slice(-2)}`;
 };
 
 const API_URL_TEMPLATE = (month, year, fy) => `https://webnodejs.chittorgarh.com/cloud/report/data-read/82/1/1/${year}/${fy}/0/all/0?search=&v=16-05`;
@@ -33,67 +33,113 @@ const parseDate = (str) => {
 };
 
 // Helper: Calculate status
+// Helper: Calculate status based on dates with strict 5 PM IST cutoff
 const calculateStatus = (open, close, listing) => {
-    const now = new Date();
-    if (!open) return "UPCOMING";
-    if (now < open) return "UPCOMING";
-    if (now >= open && now <= close) return "OPEN";
-    if (now > close && (!listing || now < listing)) return "CLOSED";
-    if (listing && now >= listing) return "LISTED";
+    // 1. Get Current IST Time as a "Wall Clock" Date object
+    // This ensures that valid IST time components are used regardless of server timezone
+    const nowIST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+
+    const openDate = open ? new Date(open) : null;
+    const closeDate = close ? new Date(close) : null;
+    const listingDate = listing ? new Date(listing) : null;
+
+    if (openDate) openDate.setHours(0, 0, 0, 0);
+    if (closeDate) closeDate.setHours(0, 0, 0, 0);
+    if (listingDate) listingDate.setHours(0, 0, 0, 0);
+
+    // Logic
+    if (listingDate && nowIST >= listingDate) return "LISTED";
+
+    if (openDate && nowIST >= openDate) {
+        if (!closeDate) return "OPEN";
+
+        const todayIST = new Date(nowIST);
+        todayIST.setHours(0, 0, 0, 0);
+
+        if (todayIST < closeDate) {
+            return "OPEN";
+        } else if (todayIST.getTime() === closeDate.getTime()) {
+            // On Closing Date: Check 5 PM IST Cutoff
+            if (nowIST.getHours() < 17) return "OPEN";
+            else return "CLOSED";
+        } else {
+            return "CLOSED";
+        }
+    }
+
+    if (openDate && nowIST < openDate) return "UPCOMING";
     return "CLOSED";
+};
+
+// Helper: Get Potential FY Strings
+// Returns array of FY strings to try: ["2026-27", "2025-26"]
+const getPotentialFYs = (year) => {
+    const next = (year + 1).toString().slice(-2);
+    const curr = year.toString().slice(-2);
+    const prev = (year - 1).toString().slice(-2);
+
+    // Priority 1: Year-(Year+1) (e.g. 2026-27) - Seems to be the new pattern
+    // Priority 2: (Year-1)-Year (e.g. 2025-26) - Standard FY pattern
+    return [
+        `${year}-${next}`,
+        `${year - 1}-${curr}`
+    ];
 };
 
 // Shared Fetcher for Report 82 (List)
 const fetchRawList = async () => {
     const month = getMonth();
     const currentYear = getYear();
-    const fy = getFinancialYear(); // Returns e.g. "2025-26" for Jan 2026
 
-    // We need to fetch for Current Year AND Previous Year to cover transition IPOs (e.g. Dec-Jan)
-    // URL structure for Report 82 seems to be .../Year/FY/...
+    // We want to probe:
+    // 1. Current Year (e.g. 2026) -> try FY 2026-27, 2025-26
+    // 2. Previous Year (e.g. 2025) -> try FY 2025-26, 2024-25
+    const yearsToProbe = [currentYear, currentYear - 1];
+    const urlsToFetch = new Set(); // Use Set to avoid duplicate URLs
 
-    // 1. Current Year (e.g. 2026, 2025-26)
-    const urlCurrent = API_URL_TEMPLATE(month, currentYear, fy);
+    for (const year of yearsToProbe) {
+        const fys = getPotentialFYs(year);
+        for (const fy of fys) {
+            urlsToFetch.add(API_URL_TEMPLATE(month, year, fy));
+        }
+    }
 
-    // 2. Previous Year (e.g. 2025, 2025-26 OR 2024-25??)
-    // If we are in Jan 2026 -> FY 25-26.
-    // Dec 2025 -> FY 25-26.
-    // So prevYear=2025, fy=2025-26. This is valid.
-
-    const prevYear = currentYear - 1;
-    let prevFy = fy; // Default same FY
-
-    // Verify FY logic: 
-    // If today is Jan 2026 -> FY 25-26.
-    // Dec 2025 -> FY 25-26.
-    // So prevYear=2025, fy=2025-26. This is valid.
-
-    const urlPrev = API_URL_TEMPLATE(month, prevYear, prevFy);
-
-    let allData = [];
+    /*
+    console.log('Dynamic Scraper Probing:');
+    urlsToFetch.forEach(u => console.log(' - ' + u));
+    */
 
     const fetchData = async (u) => {
         try {
-            const { data } = await axios.get(u, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+            const { data } = await axios.get(u, {
+                headers: { 'User-Agent': 'Mozilla/5.0' },
+                timeout: 10000
+            });
             return (data && data.reportTableData) ? data.reportTableData : [];
         } catch (e) {
-            console.error(`Error fetching list from ${u}:`, e.message);
+            // console.error(`Failed probe to ${u}:`, e.message);
             return [];
         }
     };
 
-    const [dataCurrent, dataPrev] = await Promise.all([
-        fetchData(urlCurrent),
-        fetchData(urlPrev)
-    ]);
+    const promises = Array.from(urlsToFetch).map(url => fetchData(url));
+    const results = await Promise.all(promises);
 
-    // Merge and Deduplicate by Company Name or Slug
-    allData = [...dataCurrent, ...dataPrev];
+    // Merge and Deduplicate by Company Name
+    let allData = [];
+    results.forEach(group => {
+        if (Array.isArray(group)) allData.push(...group);
+    });
+
     const unique = new Map();
     for (const item of allData) {
         if (!item['Company']) continue;
         unique.set(item['Company'], item);
     }
+
+    /*
+    console.log(`Merged ${allData.length} raw records into ${unique.size} unique IPOs.`);
+    */
 
     return Array.from(unique.values());
 };
@@ -338,9 +384,9 @@ export const scrapeChittorgarhIPOs = async (limit = 5, type = 'ALL') => {
             },
             open_date: openDate || new Date(),
             close_date: closeDate || new Date(),
-            listing_date: rListingDate || new Date(),
-            refund_date: closeDate ? new Date(closeDate.getTime() + 4 * 24 * 60 * 60 * 1000) : null,
-            allotment_date: closeDate ? new Date(closeDate.getTime() + 3 * 24 * 60 * 60 * 1000) : null,
+            listing_date: rListingDate || (closeDate ? new Date(closeDate.getTime() + 6 * 24 * 60 * 60 * 1000) : new Date()),
+            refund_date: closeDate ? new Date(closeDate.getTime() + 4 * 24 * 60 * 60 * 1000) : new Date(),
+            allotment_date: closeDate ? new Date(closeDate.getTime() + 3 * 24 * 60 * 60 * 1000) : new Date(),
 
             registrarName: detail.registrar || "N/A",
             registrarLink: detail.registrarLink || "",
@@ -361,10 +407,13 @@ export const scrapeChittorgarhIPOs = async (limit = 5, type = 'ALL') => {
                 day_low: detail.listingLow || 0,
                 market_close: detail.listingClose || 0
             },
-            allotment_date: detail.allotmentDate || (closeDate ? new Date(closeDate.getTime() + 3 * 24 * 60 * 60 * 1000) : null),
-            refund_date: detail.refundDate || (closeDate ? new Date(closeDate.getTime() + 4 * 24 * 60 * 60 * 1000) : null),
-            listing_date: detail.listingDate || rListingDate || (closeDate ? new Date(closeDate.getTime() + 6 * 24 * 60 * 60 * 1000) : null),
+            // Note: These below were redundant or intended as overrides, simplifying to ensure they aren't null
         };
+
+        // Final Date Refinement from Details if available
+        if (detail.allotmentDate) ipoData.allotment_date = detail.allotmentDate;
+        if (detail.refundDate) ipoData.refund_date = detail.refundDate;
+        if (detail.listingDate) ipoData.listing_date = detail.listingDate;
 
         ipos.push(ipoData);
     }

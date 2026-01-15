@@ -98,4 +98,16 @@ router.post('/sync-sme', protect, admin, syncSMEData);
  */
 router.post('/sync-gmp', protect, admin, syncGMPData);
 
+/**
+ * @swagger
+ * /api/scraper/cron:
+ *   get:
+ *     summary: Trigger IPO Sync via Cron (Vercel)
+ *     tags: [Scraper]
+ *     responses:
+ *       200:
+ *         description: Sync initiated
+ */
+router.get('/cron', syncScrapedData);
+
 export default router;

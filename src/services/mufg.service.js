@@ -34,9 +34,16 @@ export const checkMUFGStatus = async (ipo, panNumbers) => {
         const details = [];
         const missingPANs = [];
 
+        const TTL_CHECKING = 60 * 1000; // 60 seconds
+        const now = Date.now();
+
         for (const pan of panNumbers) {
             const found = cachedResults.find(r => r.panNumber === pan);
-            if (found) {
+
+            // CHECK STALE STATUS
+            const isStaleChecking = found && found.status === 'CHECKING' && (now - new Date(found.lastChecked).getTime() > TTL_CHECKING);
+
+            if (found && !isStaleChecking) {
                 details.push({
                     pan,
                     status: found.status,
@@ -44,6 +51,9 @@ export const checkMUFGStatus = async (ipo, panNumbers) => {
                     units: found.units
                 });
             } else {
+                if (isStaleChecking) {
+                    console.warn(`⚠️ Stale CHECKING status found for ${pan} in MUFG check. Re-queuing.`);
+                }
                 details.push({ pan, status: 'CHECKING', message: 'Checking...' });
                 missingPANs.push(pan);
             }

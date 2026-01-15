@@ -23,7 +23,7 @@ const PORT = process.env.PORT || 5000;
 const app = express();
 dbConnect();
 
-cron.schedule('*/60 * * * *', async () => {
+cron.schedule('*/15 * * * *', async () => {
     console.log('Running scheduled GMP Sync...');
     try {
         await syncAllGMPData();
@@ -33,7 +33,7 @@ cron.schedule('*/60 * * * *', async () => {
     }
 });
 
-cron.schedule('*/60 * * * *', async () => {
+cron.schedule('*/15 * * * *', async () => {
     console.log('Running scheduled IPO Sync...');
     try {
         await scrapeAndSaveIPOData(10);
