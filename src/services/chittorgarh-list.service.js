@@ -344,6 +344,12 @@ export const scrapeChittorgarhIPOs = async (limit = 5, type = 'ALL') => {
 
         if (type !== 'ALL' && ipoType !== type) continue;
 
+        // [USER REQUEST] SME IPOs require minimum 2 lots
+        if (ipoType === 'SME' && detail) {
+            detail.lotSize = detail.lotSize * 2;
+            detail.lotPrice = detail.lotPrice * 2;
+        }
+
         // Fix Icon URL from List if relative
         let listIcon = item['~compare_image'] || "";
         if (listIcon && listIcon.startsWith('/')) {

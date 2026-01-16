@@ -186,6 +186,13 @@ export const scrapeIPOData = async (limit = 3) => {
                 const isSMEHeuristic = calculatedLotPrice > 50000;
                 let finalIpoType = (typeStr.toUpperCase().includes("SME") || isSMEHeuristic) ? "SME" : "MAINBOARD";
 
+                // [USER REQUEST] SME IPOs require minimum 2 lots
+                if (finalIpoType === 'SME') {
+                    lotShares = lotShares * 2;
+                }
+
+                const finalLotPrice = (lotShares || 0) * maxPrice;
+
                 const slug = slugify(name, { lower: true, strict: true });
 
                 // --- INTEGRATION: InvestorGain Data ---
@@ -246,7 +253,7 @@ export const scrapeIPOData = async (limit = 3) => {
                     registrarName: registrarName,
                     registrarLink: getTableLink('Registrar'),
                     lot_size: lotShares || 0,
-                    lot_price: calculatedLotPrice,
+                    lot_price: finalLotPrice,
                     min_price: minPrice,
                     max_price: maxPrice,
                     isAllotmentOut: false,
