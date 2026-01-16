@@ -6,7 +6,7 @@ import slugify from 'slugify';
 import Mainboard from '../models/mainboard.model.js';
 import Registrar from '../models/Registrar.js';
 import { matchRegistrar } from '../utils/registrar-matcher.js';
-import { isMatch, parseCurrency, parseIssueSize, roundToTwo, getSimilarity } from '../utils/matching.js';
+import { isMatch, parseCurrency, parseIssueSize, roundToTwo, getSimilarity, isSubsetMatch } from '../utils/matching.js';
 
 // ...
 
@@ -389,7 +389,12 @@ const syncIPOData = async (limit, type) => {
                 let bestScore = 0;
                 let bestSlug = null;
                 for (const [slug, apiItem] of ipoMap.entries()) {
-                    const score = getSimilarity(scraped.companyName, apiItem.companyName);
+                    let score = getSimilarity(scraped.companyName, apiItem.companyName);
+                    // Boost score for subset matches (e.g. "Shadowfax" vs "Shadowfax Technologies")
+                    if (isSubsetMatch(scraped.companyName, apiItem.companyName)) {
+                        score = Math.max(score, 0.9);
+                    }
+
                     if (score > bestScore) {
                         bestScore = score;
                         bestSlug = slug;
@@ -435,7 +440,11 @@ const syncIPOData = async (limit, type) => {
                 let bestScore = 0;
                 let bestSlug = null;
                 for (const [slug, existing] of ipoMap.entries()) {
-                    const score = getSimilarity(legacy.companyName, existing.companyName);
+                    let score = getSimilarity(legacy.companyName, existing.companyName);
+                    if (isSubsetMatch(legacy.companyName, existing.companyName)) {
+                        score = Math.max(score, 0.9);
+                    }
+
                     if (score > bestScore) {
                         bestScore = score;
                         bestSlug = slug;
@@ -515,7 +524,15 @@ const syncIPOData = async (limit, type) => {
 
                 // Merge Subscription
                 const subInfo = subscriptionData.find(s => isMatch(s.companyName, ipo.companyName));
-                if (subInfo && subInfo.total > 0) {
+
+                // [FIX] Force Subscription to 0 if IPO is UPCOMING
+                // This prevents incorrect data from scraper (e.g. 105x for unopened IPO)
+                if (ipo.status === 'UPCOMING') {
+                    ipo.subscription = {
+                        qib: 0, nii: 0, snii: 0, bnii: 0, retail: 0,
+                        employee: 0, shareholders: 0, total: 0, applications: 0
+                    };
+                } else if (subInfo && subInfo.total > 0) {
                     ipo.subscription = {
                         qib: roundToTwo(subInfo.qib),
                         nii: roundToTwo(subInfo.nii),
@@ -536,7 +553,11 @@ const syncIPOData = async (limit, type) => {
                     let bestMatch = null;
                     let highestScore = 0;
                     for (const existing of allIPOs) {
-                        const score = getSimilarity(existing.companyName, ipo.companyName);
+                        let score = getSimilarity(existing.companyName, ipo.companyName);
+                        if (isSubsetMatch(existing.companyName, ipo.companyName)) {
+                            score = Math.max(score, 0.9);
+                        }
+
                         if (score > highestScore) {
                             highestScore = score;
                             bestMatch = existing;
@@ -568,7 +589,8 @@ const syncIPOData = async (limit, type) => {
                     }
 
                     // 2. Subscription Update Logic
-                    if (ipo.subscription && ipo.subscription.total > 0) {
+                    // Allow update if we have meaningful data OR if we explicitly reset it for UPCOMING
+                    if (ipo.subscription && (ipo.subscription.total > 0 || ipo.status === 'UPCOMING')) {
                         updatePayload.subscription = ipo.subscription;
                     }
 

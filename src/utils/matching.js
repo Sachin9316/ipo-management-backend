@@ -13,7 +13,7 @@ export const getTokens = (str) => {
     return str.toLowerCase()
         .replace(/[^a-z0-9\s]/g, '') // remove special chars
         .split(/\s+/)
-        .filter(t => t.length > 0 && !["limited", "ltd", "private", "pvt", "india", "company", "ipo"].includes(t));
+        .filter(t => t.length > 0 && !["limited", "ltd", "private", "pvt", "india", "company", "ipo", "ct", "o"].includes(t));
 };
 
 /**
