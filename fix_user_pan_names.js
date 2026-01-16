@@ -5,7 +5,8 @@ import User from './src/models/User.model.js';
 
 dotenv.config();
 
-const MONGO_URI = process.env.DB_URL || "mongodb+srv://su9206407_db_user:sach%409316@cluster0.pzmdcdv.mongodb.net/ultimate-ipo-backend";
+const MONGO_URI = process.env.DB_URL;
+if (!MONGO_URI) { console.error("Missing DB_URL in .env"); process.exit(1); }
 
 const run = async () => {
     try {
