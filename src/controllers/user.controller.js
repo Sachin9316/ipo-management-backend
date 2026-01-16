@@ -202,7 +202,7 @@ export const addMyPan = async (req, res) => {
 
             user.panDocuments.push({
                 panNumber,
-                name,
+                name: name || "",
                 dob,
                 documentUrl,
                 status: "VERIFIED" // Setting to VERIFIED for now as we trust the logic
